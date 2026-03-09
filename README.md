@@ -1,6 +1,6 @@
 # DevOps-Copilot
 DevOps Copilot is an AI-powered platform that connects to AWS environments and automatically analyzes infrastructure metrics to provide operational insights, cost optimization recommendations, and performance diagnostics.
-#Features
+# Features
 
 Secure AWS cross-account integration using IAM roles
 
@@ -14,7 +14,7 @@ Multi-tenant architecture
 
 Scalable microservices design
 
-#Architecture
+# Architecture
 
 The platform consists of multiple microservices:
 
@@ -26,7 +26,7 @@ Metrics Collector	Cloud metrics ingestion
 Insight Engine	Infrastructure analysis
 LLM Service	AI explanation generation
 Worker Service	Background task processing
-#Technologies
+# Technologies
 
 Python / FastAPI
 
