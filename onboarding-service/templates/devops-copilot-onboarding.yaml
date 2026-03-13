@@ -1,0 +1,46 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: DevOps Copilot AWS Integration
+
+Parameters:
+  ExternalId:
+    Type: String
+    Description: External ID provided by DevOps Copilot
+  PlatformAccountId:
+    Type: String
+    Description: AWS Account ID of DevOps Copilot platform
+
+Resources:
+  DevOpsCopilotRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: DevOpsCopilotRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: 
+              - !Sub "arn:aws:iam::${PlatformAccountId}:root"
+              - "arn:aws:iam::241524041973:user/Victor"
+            Action: "sts:AssumeRole"
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref ExternalId
+      Policies:
+        - PolicyName: DevOpsCopilotReadOnly
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudwatch:GetMetricData
+                  - cloudwatch:ListMetrics
+                  - ec2:DescribeInstances
+                  - rds:DescribeDBInstances
+                  - lambda:ListFunctions
+                Resource: "*"
+
+Outputs:
+  RoleArn:
+    Description: Role ARN for DevOps Copilot
+    Value: !GetAtt DevOpsCopilotRole.Arn

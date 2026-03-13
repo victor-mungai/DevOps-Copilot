@@ -1,0 +1,516 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DevOps Copilot Onboarding</title>
+  <style>
+    :root {
+      --bg: #0b0f17;
+      --rail: #0b0f17;
+      --card: #111827;
+      --card-2: #0f172a;
+      --border: #1f2937;
+      --ink: #ffffff;
+      --muted: #9ca3af;
+      --accent: #2563eb;
+      --accent-2: #1d4ed8;
+      --ok: #10b981;
+      --warn: #f59e0b;
+      --bad: #ef4444;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    .app {
+      min-height: 100vh;
+      display: flex;
+    }
+    .rail {
+      width: 260px;
+      background: var(--rail);
+      border-right: 1px solid var(--border);
+      padding: 32px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .rail-title {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: var(--muted);
+    }
+    .rail-step {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+    }
+    .rail-indicator {
+      position: relative;
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      background: #374151;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 600;
+      color: #9ca3af;
+      flex-shrink: 0;
+    }
+    .rail-line {
+      position: absolute;
+      left: 50%;
+      top: 30px;
+      width: 2px;
+      height: 26px;
+      background: var(--border);
+      transform: translateX(-50%);
+    }
+    .rail-label {
+      padding-top: 4px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .rail-step.is-active .rail-indicator {
+      background: var(--accent);
+      color: #fff;
+    }
+    .rail-step.is-completed .rail-indicator {
+      background: var(--ok);
+      color: #fff;
+    }
+    .rail-step.is-active .rail-label,
+    .rail-step.is-completed .rail-label {
+      color: #fff;
+      font-weight: 600;
+    }
+
+    .content {
+      flex: 1;
+      padding: 40px 40px 60px;
+      overflow-y: auto;
+    }
+    .header {
+      max-width: 760px;
+      margin: 0 auto 32px;
+    }
+    .header h1 {
+      margin: 0 0 8px 0;
+      font-size: 28px;
+      font-weight: 600;
+    }
+    .header p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .stack {
+      position: relative;
+      max-width: 760px;
+      margin: 0 auto 32px;
+      min-height: 520px;
+    }
+    .step-card {
+      position: absolute;
+      left: 0;
+      right: 0;
+      background: linear-gradient(135deg, var(--card) 0%, var(--card-2) 100%);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+      transition: transform 0.35s ease, opacity 0.35s ease;
+      background-size: 200% 200%;
+      overflow: visible;
+    }
+    .step-card::before {
+      content: "";
+      position: absolute;
+      inset: -10px;
+      border-radius: 16px;
+      background:
+        radial-gradient(circle at 0% 0%, hsl(27deg 93% 60%), transparent),
+        radial-gradient(circle at 100% 0%, #00a6ff, transparent),
+        radial-gradient(circle at 0% 100%, #ff0056, transparent),
+        radial-gradient(circle at 100% 100%, #6500ff, transparent);
+      filter: blur(18px);
+      opacity: 0;
+      z-index: -2;
+      transition: opacity 0.4s ease;
+    }
+    .step-card::after {
+      content: "";
+      position: absolute;
+      inset: -2px;
+      border-radius: 14px;
+      background:
+        radial-gradient(circle at 0% 0%, hsl(27deg 93% 60%), transparent),
+        radial-gradient(circle at 100% 0%, #00a6ff, transparent),
+        radial-gradient(circle at 0% 100%, #ff0056, transparent),
+        radial-gradient(circle at 100% 100%, #6500ff, transparent);
+      opacity: 0.2;
+      z-index: -1;
+    }
+    .step-card.is-active::before {
+      opacity: 0.75;
+      animation: pulse 3s ease-in-out infinite;
+    }
+    .step-card.is-active {
+      animation: gradientShift 5s ease-in-out infinite;
+    }
+    .step-card.is-completed {
+      background: linear-gradient(135deg, #1a1a22 10%, #050505 60%);
+    }
+    .step-card.is-active {
+      background: linear-gradient(135deg, #1e1e24 10%, #0a0a0f 60%);
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.55; }
+      50% { opacity: 0.85; }
+    }
+    @keyframes gradientShift {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+    .step-card h2 {
+      margin: 0 0 8px 0;
+      font-size: 18px;
+    }
+    .step-subtitle {
+      margin: 0 0 16px 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .step-row {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: 1fr 1fr;
+    }
+    label {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    input {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #0b0f16;
+      color: #fff;
+      font-size: 14px;
+    }
+    input:disabled {
+      opacity: 0.6;
+    }
+    button {
+      margin-top: 12px;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover { background: var(--accent-2); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
+    .dot.ok { background: var(--ok); }
+    .dot.fail { background: var(--bad); }
+
+    .activity {
+      max-width: 760px;
+      margin: 0 auto;
+      background: #0f172a;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .activity-title {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+    .activity-log {
+      max-height: 220px;
+      overflow-y: auto;
+      font-family: Consolas, monospace;
+      font-size: 12px;
+      color: #d1d5db;
+      white-space: pre-wrap;
+    }
+
+    @media (max-width: 900px) {
+      .app { flex-direction: column; }
+      .rail {
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+        flex-direction: row;
+        overflow-x: auto;
+      }
+      .rail-step { min-width: 180px; }
+      .content { padding: 24px 16px 40px; }
+      .step-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="rail">
+      <div class="rail-title">Onboarding Steps</div>
+      <div class="rail-step" data-step="1">
+        <div class="rail-indicator">1<span class="rail-line"></span></div>
+        <div class="rail-label">Create Tenant</div>
+      </div>
+      <div class="rail-step" data-step="2">
+        <div class="rail-indicator">2<span class="rail-line"></span></div>
+        <div class="rail-label">Deploy AWS Stack</div>
+      </div>
+      <div class="rail-step" data-step="3">
+        <div class="rail-indicator">3<span class="rail-line"></span></div>
+        <div class="rail-label">Verify Role</div>
+      </div>
+      <div class="rail-step" data-step="4">
+        <div class="rail-indicator">4</div>
+        <div class="rail-label">Connected</div>
+      </div>
+    </aside>
+
+    <main class="content">
+      <div class="header">
+        <h1>DevOps Copilot AWS Onboarding</h1>
+        <p>Connect your AWS account to enable monitoring and automation.</p>
+      </div>
+
+      <div class="stack" id="stack">
+        <section class="step-card" data-step="1">
+          <h2>Step 1 - Create Tenant</h2>
+          <p class="step-subtitle">Create a workspace for this AWS account.</p>
+          <label for="tenantName">Tenant Name</label>
+          <input id="tenantName" placeholder="my-aws-workspace" />
+          <button id="createTenant" data-enable-on-step="1">Create Tenant</button>
+          <p class="step-subtitle" id="tenantSummary">No tenant created yet.</p>
+        </section>
+
+        <section class="step-card" data-step="2">
+          <h2>Step 2 - Deploy AWS Integration Stack</h2>
+          <p class="step-subtitle">Deploy the DevOps Copilot CloudFormation stack in your AWS account.</p>
+          <div class="status"><span class="dot" id="linkDot"></span><span id="linkStatus">Waiting for tenant.</span></div>
+          <button id="getLink" data-enable-on-step="2" disabled>Open Deployment Link</button>
+          <p class="step-subtitle" id="linkNote">This opens the AWS Console with prefilled parameters.</p>
+        </section>
+
+        <section class="step-card" data-step="3">
+          <h2>Step 3 - Verify AWS Role</h2>
+          <p class="step-subtitle">Verify the IAM role for DevOps Copilot integration.</p>
+          <div class="step-row">
+            <div>
+              <label for="tenantIdInput">Tenant ID</label>
+              <input id="tenantIdInput" placeholder="Enter tenant ID" />
+            </div>
+            <div>
+              <label for="accountId">Account ID</label>
+              <input id="accountId" placeholder="-" disabled />
+            </div>
+          </div>
+          <label for="roleArn">Role ARN</label>
+          <input id="roleArn" placeholder="arn:aws:iam::123456789012:role/DevOpsCopilotRole" />
+          <label for="region">Region (optional)</label>
+          <input id="region" placeholder="us-east-1" />
+          <button id="verifyRole" data-enable-on-step="3" disabled>Verify Connection</button>
+          <p class="step-subtitle" id="verifyNote">Paste the Role ARN from the stack output.</p>
+        </section>
+
+        <section class="step-card" data-step="4">
+          <h2>Step 4 - Connected</h2>
+          <div class="status"><span class="dot" id="doneDot"></span><span id="doneStatus">Not connected yet.</span></div>
+          <p class="step-subtitle">Your AWS account is now integrated. Monitoring will begin shortly.</p>
+        </section>
+      </div>
+
+      <section class="activity">
+        <div class="activity-title">Activity Log</div>
+        <div id="output" class="activity-log"></div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const apiBase = window.location.origin;
+
+    const state = {
+      currentStep: 1,
+      completedSteps: new Set(),
+      tenantId: null,
+    };
+
+    function logOutput(label, payload) {
+      const time = new Date().toISOString();
+      const content = `[${time}] ${label}\n${JSON.stringify(payload, null, 2)}\n\n`;
+      $('output').textContent = content + $('output').textContent;
+    }
+
+    function updateRail() {
+      document.querySelectorAll('.rail-step').forEach((el) => {
+        const step = Number(el.dataset.step);
+        el.classList.toggle('is-active', step === state.currentStep);
+        el.classList.toggle('is-completed', state.completedSteps.has(step));
+      });
+    }
+
+    function updateCards() {
+      document.querySelectorAll('.step-card').forEach((el) => {
+        const step = Number(el.dataset.step);
+        if (step > state.currentStep) {
+          el.style.display = 'none';
+          return;
+        }
+        el.style.display = 'block';
+        const offset = state.currentStep - step;
+        const scale = 1 - offset * 0.05;
+        const y = offset * 24;
+        el.style.transform = `translateY(${y}px) scale(${scale})`;
+        el.style.opacity = step === state.currentStep ? '1' : '0.45';
+        el.style.pointerEvents = step === state.currentStep ? 'auto' : 'none';
+        el.style.zIndex = String(10 - offset);
+        el.classList.toggle('is-active', step === state.currentStep);
+        el.classList.toggle('is-completed', state.completedSteps.has(step));
+      });
+
+      document.querySelectorAll('[data-enable-on-step]').forEach((el) => {
+        const step = Number(el.dataset.enableOnStep);
+        el.disabled = step !== state.currentStep;
+      });
+    }
+
+    function advanceStep(step) {
+      state.completedSteps.add(step);
+      state.currentStep = Math.min(step + 1, 4);
+      updateRail();
+      updateCards();
+    }
+
+    function setCurrentStep(step) {
+      state.currentStep = step;
+      updateRail();
+      updateCards();
+    }
+
+    $('createTenant').addEventListener('click', async () => {
+      const name = $('tenantName').value.trim();
+      if (!name) {
+        logOutput('Create tenant failed', { detail: 'Tenant name is required' });
+        return;
+      }
+      try {
+        const res = await fetch(`${apiBase}/v1/tenants`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+        const raw = await res.text();
+        const data = raw ? JSON.parse(raw) : {};
+        if (!res.ok) throw data;
+
+        state.tenantId = data.tenant_id;
+        $('tenantSummary').textContent = `Tenant created: ${data.tenant_id}`;
+        $('tenantIdInput').value = data.tenant_id;
+        $('linkStatus').textContent = 'Ready to open onboarding link.';
+        $('linkDot').classList.add('ok');
+        logOutput('Tenant created', data);
+        advanceStep(1);
+      } catch (err) {
+        logOutput('Create tenant failed', err);
+      }
+    });
+
+    $('getLink').addEventListener('click', async () => {
+      try {
+        const tenantId = state.tenantId || $('tenantIdInput').value.trim();
+        if (!tenantId) {
+          logOutput('Get link failed', { detail: 'Create a tenant first.' });
+          return;
+        }
+        const res = await fetch(`${apiBase}/v1/tenants/${tenantId}/onboarding-link`);
+        const raw = await res.text();
+        const data = raw ? JSON.parse(raw) : {};
+        if (!res.ok) throw data;
+
+        if (data.onboarding_url) {
+          window.open(data.onboarding_url, '_blank');
+        }
+        $('linkNote').textContent = 'Stack link opened. Deploy the stack and copy the Role ARN.';
+        logOutput('Onboarding link', data);
+        advanceStep(2);
+      } catch (err) {
+        logOutput('Get link failed', err);
+      }
+    });
+
+    $('verifyRole').addEventListener('click', async () => {
+      try {
+        const tenantId = $('tenantIdInput').value.trim() || state.tenantId;
+        const roleArn = $('roleArn').value.trim();
+        const region = $('region').value.trim();
+        if (!tenantId) {
+          logOutput('Verify failed', { detail: 'Tenant ID is required.' });
+          return;
+        }
+        if (!roleArn) {
+          logOutput('Verify failed', { detail: 'Role ARN is required.' });
+          return;
+        }
+        const payload = { role_arn: roleArn };
+        if (region) payload.region = region;
+
+        const res = await fetch(`${apiBase}/v1/tenants/${tenantId}/verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const raw = await res.text();
+        const data = raw ? JSON.parse(raw) : {};
+        if (!res.ok) throw data;
+
+        if (data.account_id) {
+          $('accountId').value = data.account_id;
+        }
+        $('doneStatus').textContent = 'Connected and ready.';
+        $('doneDot').classList.add('ok');
+        logOutput('Verify success', data);
+        advanceStep(3);
+        advanceStep(4);
+      } catch (err) {
+        $('doneDot').classList.add('fail');
+        logOutput('Verify failed', err);
+      }
+    });
+
+    // Initialize
+    setCurrentStep(1);
+    logOutput('Onboarding initialized', { status: 'ready' });
+  </script>
+</body>
+</html>
