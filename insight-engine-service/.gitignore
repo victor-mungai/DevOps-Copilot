@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+*.db
+seed_metrics.json
+.env
+*.log

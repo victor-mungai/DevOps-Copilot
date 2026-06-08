@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+requests
+prometheus_client
+schedule
+pydantic
+python-dotenv
