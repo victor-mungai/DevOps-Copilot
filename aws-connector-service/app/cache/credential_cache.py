@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from threading import Lock
 from typing import Optional
 
@@ -11,7 +11,7 @@ def get_cached_credentials(tenant_id: str) -> Optional[dict]:
         creds = credential_store.get(tenant_id)
         if not creds:
             return None
-        if creds["expiration"] <= datetime.utcnow():
+        if creds["expiration"] <= datetime.now(timezone.utc):
             return None
         return creds
 

@@ -6,6 +6,7 @@ import { CreateTenantStep } from './components/CreateTenantStep';
 import { DeployStackStep } from './components/DeployStackStep';
 import { VerifyRoleStep } from './components/VerifyRoleStep';
 import { ConnectedStep } from './components/ConnectedStep';
+import { InsightsDashboard } from './components/InsightsDashboard';
 
 export default function App() {
   const [currentStep, setCurrentStep] = useState(1);
@@ -205,6 +206,9 @@ export default function App() {
               <ConnectedStep />
             </StepCard>
           </div>
+
+          {/* Insights Dashboard — appears once a tenant exists */}
+          {tenantId && <InsightsDashboard apiBase={apiBase} tenantId={tenantId} />}
 
           {/* Activity Log */}
           <ActivityLog logs={logs} />

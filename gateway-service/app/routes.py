@@ -105,3 +105,22 @@ async def metrics_collect_run(request: Request):
 @router.post("/v1/metrics/collect/tenant/{tenant_id}")
 async def metrics_collect_tenant(request: Request, tenant_id: str):
     return await forward_request("metrics", f"/collect/tenant/{tenant_id}", request)
+
+
+@router.post("/v1/insights/{tenant_id}/analyze")
+async def insights_analyze(request: Request, tenant_id: str):
+    return await forward_request(
+        "insight", f"/insights/{tenant_id}/analyze", request
+    )
+
+
+@router.get("/v1/insights/{tenant_id}")
+async def insights_list(request: Request, tenant_id: str):
+    return await forward_request("insight", f"/insights/{tenant_id}", request)
+
+
+@router.post("/v1/insights/{tenant_id}/explain")
+async def insights_explain(request: Request, tenant_id: str):
+    return await forward_request(
+        "insight", f"/insights/{tenant_id}/explain", request
+    )

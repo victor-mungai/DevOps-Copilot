@@ -18,19 +18,25 @@ def _base_url() -> str:
     return DEFAULT_CONNECTOR_BASE
 
 
+def _unwrap(payload: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(payload, dict) and "data" in payload:
+        return payload["data"]
+    return payload
+
+
 def get_ec2_instances(tenant_id: str) -> dict[str, Any]:
     url = f"{_base_url()}/{tenant_id}/ec2/instances"
-    return requests.get(url, timeout=30).json()
+    return _unwrap(requests.get(url, timeout=30).json())
 
 
 def get_rds_instances(tenant_id: str) -> dict[str, Any]:
     url = f"{_base_url()}/{tenant_id}/rds/databases"
-    return requests.get(url, timeout=30).json()
+    return _unwrap(requests.get(url, timeout=30).json())
 
 
 def get_lambda_functions(tenant_id: str) -> dict[str, Any]:
     url = f"{_base_url()}/{tenant_id}/lambda/functions"
-    return requests.get(url, timeout=30).json()
+    return _unwrap(requests.get(url, timeout=30).json())
 
 
 def get_cloudwatch_metrics(tenant_id: str) -> dict[str, Any]:
