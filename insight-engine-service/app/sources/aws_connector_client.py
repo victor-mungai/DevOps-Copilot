@@ -5,6 +5,14 @@ import requests
 from .. import config
 
 
+class ConnectorError(RuntimeError):
+    """Raised when the aws-connector dependency is unreachable or errors.
+
+    Lets callers distinguish an upstream-dependency failure (map to 502) from a
+    genuine internal bug (500).
+    """
+
+
 def _base_url() -> str:
     if config.AWS_CONNECTOR_BASE_URL:
         return config.AWS_CONNECTOR_BASE_URL.rstrip("/")
@@ -16,9 +24,14 @@ def _base_url() -> str:
 def get_ec2_instances(tenant_id: str) -> dict[str, Any]:
     assert tenant_id, "tenant_id is required"
     url = f"{_base_url()}/{tenant_id}/ec2/instances"
-    resp = requests.get(url, timeout=config.HTTP_TIMEOUT)
-    resp.raise_for_status()
-    return resp.json()
+    try:
+        resp = requests.get(url, timeout=config.HTTP_TIMEOUT)
+        resp.raise_for_status()
+        return resp.json()
+    except requests.RequestException as exc:
+        # Unreachable connector, non-2xx, timeout, or bad JSON — all are upstream
+        # dependency failures, not bugs in this service.
+        raise ConnectorError(f"aws-connector request to {url} failed: {exc}") from exc
 
 
 def list_ec2_instances(tenant_id: str) -> list[dict]:

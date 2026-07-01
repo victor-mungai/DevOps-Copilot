@@ -30,6 +30,23 @@ def create_tenant_endpoint(
     )
 
 
+@router.get("/tenants/connected")
+def list_connected_tenants(db: Session = Depends(get_db)):
+    """Tenants with a verified AWS account. Used by the metrics-collector to
+    discover who to schedule collection for, instead of a hardcoded env list."""
+    rows = db.query(AwsAccount).filter(AwsAccount.status == "connected").all()
+    return {
+        "tenants": [
+            {
+                "tenant_id": str(r.tenant_id),
+                "account_id": r.account_id,
+                "region": r.region,
+            }
+            for r in rows
+        ]
+    }
+
+
 @router.get(
     "/tenants/{tenant_id}/onboarding-link", response_model=OnboardingLinkResponse
 )

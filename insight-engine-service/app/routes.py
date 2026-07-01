@@ -9,6 +9,8 @@ from .models.schemas import AnalyzeResponse, ExplainRequest, ExplainResponse
 from .observability import get_request_id
 from .services import llm_service
 from .services.analysis_service import analyze_tenant
+from .services.context_builder import build_ai_context
+from .sources.aws_connector_client import ConnectorError
 
 logger = logging.getLogger("insight-engine")
 router = APIRouter()
@@ -32,7 +34,15 @@ def health():
 @router.post("/insights/{tenant_id}/analyze", response_model=AnalyzeResponse)
 def analyze(tenant_id: str, request: Request, db: Session = Depends(get_db)):
     _enforce_tenant(request, tenant_id)
-    insights = analyze_tenant(db, tenant_id, request_id=get_request_id(request))
+    try:
+        insights = analyze_tenant(db, tenant_id, request_id=get_request_id(request))
+    except ConnectorError as exc:
+        logger.warning("Connector unavailable during analyze: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="AWS connector is unavailable. Ensure the aws-connector "
+            "service is running and the account is connected.",
+        ) from exc
     return AnalyzeResponse(
         tenant_id=tenant_id, insights_found=len(insights), insights=insights
     )
@@ -60,22 +70,21 @@ def explain(
 ):
     _enforce_tenant(request, tenant_id)
 
-    if payload.insight_id:
-        insight = insight_repository.get_insight(db, tenant_id, payload.insight_id)
-    else:
-        # Default to the most recent insight so the chat works without an id.
-        rows = insight_repository.list_insights(db, tenant_id, limit=1)
-        insight = rows[0] if rows else None
-
-    if not insight:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No insight found for tenant",
-        )
-
-    result = llm_service.explain_insight(
-        insight.to_dict(), payload.question, request_id=get_request_id(request)
+    # Sprint 2.1: build the full tenant-scoped context (insights + live metrics +
+    # region + RAG) and answer with a bounded sliding window of history.
+    context = build_ai_context(
+        db,
+        tenant_id,
+        region=payload.region,
+        resource_id=payload.resource_id,
+        insight_id=payload.insight_id,
+    )
+    history = [m.model_dump() for m in payload.history]
+    result = llm_service.explain(
+        context, payload.question, history=history, request_id=get_request_id(request)
     )
     return ExplainResponse(
-        answer=result["answer"], model=result["model"], insight_id=insight.id
+        answer=result["answer"],
+        model=result["model"],
+        insight_id=context.get("primary_insight_id"),
     )

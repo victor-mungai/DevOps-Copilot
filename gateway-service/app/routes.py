@@ -2,6 +2,7 @@ from fastapi import Request
 from fastapi.responses import Response
 
 from .services.routing_service import forward_request
+from .services.metrics_query import query_range
 
 
 def _path_with_tenant(path: str, tenant_id: str) -> str:
@@ -41,6 +42,13 @@ async def health_v1():
 @router.post("/v1/tenants")
 async def create_tenant(request: Request):
     return await forward_request("onboarding", "/tenants", request, inject_tenant=False)
+
+
+@router.get("/v1/tenants/connected")
+async def list_connected_tenants(request: Request):
+    return await forward_request(
+        "onboarding", "/tenants/connected", request, inject_tenant=False
+    )
 
 
 @router.get("/v1/tenants/{tenant_id}/onboarding-link")
@@ -90,6 +98,25 @@ async def cloudwatch_metric_statistics(request: Request, tenant_id: str):
     return await forward_request(
         "aws_connector", f"/aws/{tenant_id}/cloudwatch/metric-statistics", request
     )
+
+
+@router.get("/v1/metrics/query")
+async def metrics_query(
+    request: Request,
+    response: Response,
+    metric: str = "cpu",
+    resource: str = "",
+    minutes: int = 180,
+    step: int = 60,
+):
+    # Prefer the authenticated tenant; fall back to the header when auth is off.
+    tenant_id = getattr(request.state, "tenant_id", None) or request.headers.get(
+        "X-Tenant-ID", ""
+    )
+    data = await query_range(tenant_id, metric, resource or None, minutes, step)
+    # Live metrics must never be cached — every poll gets a fresh query.
+    response.headers["Cache-Control"] = "no-store"
+    return data
 
 
 @router.get("/v1/metrics/health")

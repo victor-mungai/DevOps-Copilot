@@ -1,9 +1,13 @@
 import logging
+import os
 import re
 
 from .. import config
 
 logger = logging.getLogger("insight-engine")
+
+# Sprint 2.1 memory hardening: sliding window + bounded context.
+MAX_CHAT_HISTORY = int(os.getenv("MAX_CHAT_HISTORY", "10"))
 
 # Feature 5: Secure prompt construction. Context-only, no invention, structured.
 SYSTEM_PROMPT = """You are an expert DevOps incident assistant for the DevOps Copilot platform.
@@ -56,6 +60,47 @@ def _format_context(insight: dict) -> str:
     )
 
 
+def _format_full_context(ctx: dict) -> str:
+    """Render the whole AI context (region, insights, live metrics, RAG) as
+    bounded plain text. No raw time series — only aggregates."""
+    lines: list[str] = [f"Region: {ctx.get('region') or 'unspecified'}"]
+    if ctx.get("resource_id"):
+        lines.append(f"Focused resource: {ctx['resource_id']}")
+
+    primary = ctx.get("primary_insight")
+    if primary:
+        lines.append("\nPrimary insight:")
+        lines.append(_format_context(primary))
+
+    others = [
+        i
+        for i in ctx.get("insights", [])
+        if not primary or i.get("id") != primary.get("id")
+    ]
+    if others:
+        lines.append(f"\nOther insights ({len(others)}):")
+        for i in others[:10]:
+            lines.append(
+                f"- [{i.get('severity')}] {i.get('resource_id')} "
+                f"({i.get('instance_type')}): {i.get('issue')}"
+            )
+
+    if ctx.get("metrics"):
+        lines.append("\nLive metric evidence:")
+        for m in ctx["metrics"]:
+            lines.append(
+                f"- {m['resource_id']} {m['metric']}: avg {m['avg']}% over "
+                f"{m['window_days']}d ({m['samples']} samples)"
+            )
+
+    if ctx.get("rag_context"):
+        lines.append("\nKnowledge base:")
+        for r in ctx["rag_context"]:
+            lines.append(f"- {r}")
+
+    return "\n".join(lines)
+
+
 def _fallback_explanation(insight: dict, question: str) -> str:
     """Deterministic, offline explanation so the value loop works without keys.
 
@@ -82,13 +127,22 @@ def _fallback_explanation(insight: dict, question: str) -> str:
     )
 
 
-def explain_insight(insight: dict, question: str, request_id: str = "-") -> dict:
-    """Return {"answer": str, "model": str} for a question about one insight."""
+def explain(
+    context: dict,
+    question: str,
+    history: list[dict] | None = None,
+    request_id: str = "-",
+) -> dict:
+    """Answer a question grounded in the full AI context (insights + live metrics
+    + region + RAG), carrying a bounded sliding window of prior turns."""
     question = sanitize_input(question)
-    if not insight:
+    primary = context.get("primary_insight")
+    has_context = bool(primary or context.get("metrics") or context.get("insights"))
+
+    if not has_context:
         return {
-            "answer": "I don't have enough context to answer that — no matching "
-            "insight was found for this tenant.",
+            "answer": "I don't have enough context to answer that yet — no insights "
+            "or metrics were found for this tenant. Try running an analysis first.",
             "model": "none",
         }
 
@@ -97,21 +151,33 @@ def explain_insight(insight: dict, question: str, request_id: str = "-") -> dict
             "LLM fallback (no ANTHROPIC_API_KEY)",
             extra={"request_id": request_id, "service": "insight-engine"},
         )
-        return {"answer": _fallback_explanation(insight, question), "model": "fallback"}
+        return {"answer": _fallback_explanation(primary or {}, question), "model": "fallback"}
 
     try:
         import anthropic  # imported lazily so the service runs without the dep
 
         client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
-        user_content = (
-            f"CONTEXT:\n{_format_context(insight)}\n\n"
-            f"USER QUESTION:\n{question}"
+
+        # Sliding window: only the most recent turns, sanitized.
+        messages = []
+        for turn in (history or [])[-MAX_CHAT_HISTORY:]:
+            role = turn.get("role")
+            content = sanitize_input(str(turn.get("content", "")))
+            if role in ("user", "assistant") and content:
+                messages.append({"role": role, "content": content})
+
+        messages.append(
+            {
+                "role": "user",
+                "content": f"CONTEXT:\n{_format_full_context(context)}\n\nUSER QUESTION:\n{question}",
+            }
         )
+
         message = client.messages.create(
             model=config.ANTHROPIC_MODEL,
             max_tokens=config.LLM_MAX_TOKENS,
             system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_content}],
+            messages=messages,
         )
         answer = "".join(
             block.text for block in message.content if getattr(block, "type", "") == "text"
@@ -123,4 +189,4 @@ def explain_insight(insight: dict, question: str, request_id: str = "-") -> dict
             exc,
             extra={"request_id": request_id, "service": "insight-engine"},
         )
-        return {"answer": _fallback_explanation(insight, question), "model": "fallback"}
+        return {"answer": _fallback_explanation(primary or {}, question), "model": "fallback"}
