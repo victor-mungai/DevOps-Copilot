@@ -13,11 +13,16 @@ import {
   Spinner,
 } from '../components/dashboard/primitives';
 
-const ALL = 'all';
+interface AsyncJobResponse {
+  job_id?: string;
+  status?: string;
+  message?: string;
+  insights_found?: number;
+}
 
 export function InsightsPage() {
   const navigate = useNavigate();
-  const { tenantId, isConnected } = useTenant();
+  const { tenantId, region, isConnected } = useTenant();
   const [insights, setInsights] = useState<Insight[]>([]);
   const [loading, setLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
@@ -44,13 +49,6 @@ export function InsightsPage() {
   useEffect(() => {
     void load();
   }, [load]);
-
-interface AsyncJobResponse {
-  job_id?: string;
-  status?: string;
-  message?: string;
-  insights_found?: number;
-}
 
   const runAnalysis = useCallback(async () => {
     if (!tenantId) return;
