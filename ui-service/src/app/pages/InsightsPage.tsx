@@ -48,10 +48,6 @@ export function InsightsPage() {
     }
   }, [tenantId]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
-
   const runAnalysis = useCallback(async () => {
     if (!tenantId) return;
     setAnalyzing(true);
@@ -82,15 +78,18 @@ export function InsightsPage() {
       // Re-load the full persisted list so the table reflects everything stored.
       const rows = await apiFetch<Insight[]>(`/v1/insights/${tenantId}?limit=200`, { tenantId });
       setInsights(rows);
-      if (rows.length === 0) {
-        setError('Analysis completed but found no issues (no idle resources, or no metrics collected yet).');
-      }
     } catch (e) {
       setError(errorMessage(e));
     } finally {
       setAnalyzing(false);
     }
   }, [tenantId, region]);
+
+  useEffect(() => {
+    if (tenantId) {
+      void runAnalysis();
+    }
+  }, [tenantId, region, runAnalysis]);
 
   const categories = useMemo(
     () => Array.from(new Set(insights.map((i) => i.category).filter(Boolean))),

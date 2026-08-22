@@ -295,6 +295,7 @@ export function MetricsPage() {
               kind={m.key}
               data={series[m.key]}
               showBrush={idx === activeMetrics.length - 1}
+              rangeMinutes={range.minutes}
             />
           ))}
         </div>
@@ -309,6 +310,7 @@ function MetricPanel({
   color,
   data,
   showBrush,
+  rangeMinutes,
 }: {
   label: string;
   unit: string;
@@ -316,14 +318,24 @@ function MetricPanel({
   kind: MetricKind;
   data: MetricPoint[];
   showBrush: boolean;
+  rangeMinutes: number;
 }) {
   const chartData = useMemo(
     () =>
-      data.map((p) => ({
-        time: new Date(p.t).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-        value: p.value,
-      })),
-    [data]
+      data.map((p) => {
+        const d = new Date(p.t);
+        const timeStr =
+          rangeMinutes > 1440
+            ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
+              ' ' +
+              d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
+            : d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+        return {
+          time: timeStr,
+          value: p.value,
+        };
+      }),
+    [data, rangeMinutes]
   );
 
   return (
