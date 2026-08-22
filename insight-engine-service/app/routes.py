@@ -31,25 +31,80 @@ def health():
     return {"status": "healthy", "service": "insight-engine"}
 
 
-@router.post("/insights/{tenant_id}/analyze", response_model=AnalyzeResponse)
+@router.post("/insights/{tenant_id}/analyze")
 def analyze(
-    tenant_id: str, request: Request, region: str = "", db: Session = Depends(get_db)
+    tenant_id: str, request: Request, region: str = "", async_mode: bool = True, db: Session = Depends(get_db)
 ):
     _enforce_tenant(request, tenant_id)
-    try:
-        insights = analyze_tenant(
-            db, tenant_id, region=region or None, request_id=get_request_id(request)
-        )
-    except ConnectorError as exc:
-        logger.warning("Connector unavailable during analyze: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="AWS connector is unavailable. Ensure the aws-connector "
-            "service is running and the account is connected.",
-        ) from exc
-    return AnalyzeResponse(
-        tenant_id=tenant_id, insights_found=len(insights), insights=insights
+    if not async_mode:
+        try:
+            insights = analyze_tenant(
+                db, tenant_id, region=region or None, request_id=get_request_id(request)
+            )
+            return AnalyzeResponse(
+                tenant_id=tenant_id, insights_found=len(insights), insights=insights
+            )
+        except ConnectorError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="AWS connector is unavailable.",
+            ) from exc
+
+    # Asynchronous Job Mode
+    import uuid
+    from datetime import datetime
+    from shared.messaging import publish
+    from .db.models import Job
+
+    job = Job(
+        id=str(uuid.uuid4()),
+        tenant_id=tenant_id,
+        job_type="insight_analysis",
+        status="queued",
+        created_at=datetime.utcnow()
     )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    publish(
+        event_type="insight.analysis.requested",
+        tenant_id=tenant_id,
+        source="insight-api",
+        region=region or "us-east-2",
+        payload={"job_id": job.id}
+    )
+
+    # In local queue fallback mode, trigger processing thread directly
+    from shared.messaging.connection import get_messaging_manager
+    manager = get_messaging_manager()
+    if not manager.is_connected:
+        from .workers.insight_worker import process_analysis_job
+        import threading
+        event_payload = {
+            "tenant_id": tenant_id,
+            "region": region or "us-east-2",
+            "payload": {"job_id": job.id}
+        }
+        threading.Thread(target=process_analysis_job, args=(event_payload,), daemon=True).start()
+
+    return {
+        "job_id": job.id,
+        "tenant_id": tenant_id,
+        "status": "queued",
+        "message": "Analysis job queued successfully",
+        "insights_found": 0,
+        "insights": []
+    }
+
+
+@router.get("/insights/jobs/{job_id}")
+def get_job_status(job_id: str, db: Session = Depends(get_db)):
+    from .db.models import Job
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job.to_dict()
 
 
 @router.get("/insights/{tenant_id}", response_model=list)

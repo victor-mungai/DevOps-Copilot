@@ -106,10 +106,62 @@ def collect_for_tenant(tenant_id: str, region: str = None) -> list[Metric]:
         return []
 
 
+def enqueue_collection_jobs(tenant_id: str, region: str = "us-east-2") -> int:
+    """Publish granular metric collection jobs to RabbitMQ for asynchronous processing."""
+    from shared.messaging import publish
+    logger.info("Enqueuing async collection jobs for tenant %s in region %s", tenant_id, region)
+    count = 0
+    try:
+        ec2_payload = get_ec2_instances(tenant_id, region=region)
+        rds_payload = get_rds_instances(tenant_id, region=region)
+        lambda_payload = get_lambda_functions(tenant_id, region=region)
+
+        for instance_id in _extract_ec2_instance_ids(ec2_payload):
+            publish(
+                event_type="metrics.collection.requested",
+                tenant_id=tenant_id,
+                source="metrics-scheduler",
+                region=region,
+                resource_id=instance_id,
+                resource_type="ec2",
+                payload={"resource_id": instance_id, "resource_type": "ec2"}
+            )
+            count += 1
+
+        for db_id in _extract_rds_ids(rds_payload):
+            publish(
+                event_type="metrics.collection.requested",
+                tenant_id=tenant_id,
+                source="metrics-scheduler",
+                region=region,
+                resource_id=db_id,
+                resource_type="rds",
+                payload={"resource_id": db_id, "resource_type": "rds"}
+            )
+            count += 1
+
+        for fn_name in _extract_lambda_names(lambda_payload):
+            publish(
+                event_type="metrics.collection.requested",
+                tenant_id=tenant_id,
+                source="metrics-scheduler",
+                region=region,
+                resource_id=fn_name,
+                resource_type="lambda",
+                payload={"resource_id": fn_name, "resource_type": "lambda"}
+            )
+            count += 1
+
+        logger.info("Enqueued %d metric collection jobs for tenant %s", count, tenant_id)
+        return count
+    except Exception as exc:
+        logger.error("Error enqueuing collection jobs for tenant %s: %s", tenant_id, exc)
+        return 0
+
+
 def collect_for_tenants(tenant_ids: Iterable[str]) -> dict:
     results = {}
-    dispatcher = get_dispatcher()
     for tenant_id in tenant_ids:
-        job = CollectionJob(tenant_id=tenant_id)
-        dispatcher.dispatch(job, lambda j: results.update({j.tenant_id: len(collect_for_tenant(j.tenant_id))}))
+        job_count = enqueue_collection_jobs(tenant_id)
+        results[tenant_id] = job_count
     return results

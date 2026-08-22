@@ -45,28 +45,52 @@ export function InsightsPage() {
     void load();
   }, [load]);
 
+interface AsyncJobResponse {
+  job_id?: string;
+  status?: string;
+  message?: string;
+  insights_found?: number;
+}
+
   const runAnalysis = useCallback(async () => {
     if (!tenantId) return;
     setAnalyzing(true);
     setError('');
     try {
       const analyzePath = region ? `/v1/insights/${tenantId}/analyze?region=${encodeURIComponent(region)}` : `/v1/insights/${tenantId}/analyze`;
-      const res = await apiFetch<AnalyzeResponse>(analyzePath, {
+      const res = await apiFetch<AsyncJobResponse>(analyzePath, {
         method: 'POST',
         tenantId,
       });
+
+      if (res.job_id) {
+        let attempts = 0;
+        while (attempts < 15) {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          attempts++;
+          try {
+            const jobStatus = await apiFetch<AsyncJobResponse>(`/v1/insights/jobs/${res.job_id}`, { tenantId });
+            if (jobStatus.status === 'completed' || jobStatus.status === 'failed') {
+              break;
+            }
+          } catch (_) {
+            break;
+          }
+        }
+      }
+
       // Re-load the full persisted list so the table reflects everything stored.
       const rows = await apiFetch<Insight[]>(`/v1/insights/${tenantId}?limit=200`, { tenantId });
       setInsights(rows);
-      if (res.insights_found === 0 && rows.length === 0) {
-        setError('Analysis ran but found no issues (no idle resources, or no metrics collected yet).');
+      if (rows.length === 0) {
+        setError('Analysis completed but found no issues (no idle resources, or no metrics collected yet).');
       }
     } catch (e) {
       setError(errorMessage(e));
     } finally {
       setAnalyzing(false);
     }
-  }, [tenantId]);
+  }, [tenantId, region]);
 
   const categories = useMemo(
     () => Array.from(new Set(insights.map((i) => i.category).filter(Boolean))),

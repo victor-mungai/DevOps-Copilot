@@ -147,6 +147,11 @@ async def insights_list(request: Request, tenant_id: str):
     return await forward_request("insight", f"/insights/{tenant_id}", request)
 
 
+@router.get("/v1/insights/jobs/{job_id}")
+async def insights_job_status(request: Request, job_id: str):
+    return await forward_request("insight", f"/insights/jobs/{job_id}", request)
+
+
 @router.post("/v1/insights/{tenant_id}/explain")
 async def insights_explain(request: Request, tenant_id: str):
     return await forward_request(
