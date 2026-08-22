@@ -1,6 +1,6 @@
 import os
 
-PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://127.0.0.1:9090").rstrip("/")
+PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://18.116.65.134:9090").rstrip("/")
 
 AWS_CONNECTOR_BASE_URL = os.getenv("AWS_CONNECTOR_BASE_URL")
 AWS_CONNECTOR_SERVICE_URL = os.getenv("AWS_CONNECTOR_SERVICE_URL")

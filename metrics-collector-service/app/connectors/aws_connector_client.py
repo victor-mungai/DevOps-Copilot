@@ -24,30 +24,54 @@ def _unwrap(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def get_ec2_instances(tenant_id: str) -> dict[str, Any]:
+def _request_json(method: str, url: str, **kwargs) -> dict[str, Any]:
+    response = requests.request(method, url, timeout=30, **kwargs)
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        body = response.text[:500] if response.text else "<empty body>"
+        raise RuntimeError(
+            f"AWS connector returned non-JSON response "
+            f"({response.status_code}) for {url}: {body}"
+        ) from exc
+
+    if not response.ok:
+        detail = payload.get("detail", payload) if isinstance(payload, dict) else payload
+        raise RuntimeError(
+            f"AWS connector request failed ({response.status_code}) for {url}: {detail}"
+        )
+
+    return payload
+
+
+def get_ec2_instances(tenant_id: str, region: str = None) -> dict[str, Any]:
     url = f"{_base_url()}/{tenant_id}/ec2/instances"
-    return _unwrap(requests.get(url, timeout=30).json())
+    if region:
+        url += f"?region={region}"
+    return _unwrap(_request_json("GET", url))
 
 
-def get_rds_instances(tenant_id: str) -> dict[str, Any]:
+def get_rds_instances(tenant_id: str, region: str = None) -> dict[str, Any]:
     url = f"{_base_url()}/{tenant_id}/rds/databases"
-    return _unwrap(requests.get(url, timeout=30).json())
+    if region:
+        url += f"?region={region}"
+    return _unwrap(_request_json("GET", url))
 
 
-def get_lambda_functions(tenant_id: str) -> dict[str, Any]:
+def get_lambda_functions(tenant_id: str, region: str = None) -> dict[str, Any]:
     url = f"{_base_url()}/{tenant_id}/lambda/functions"
-    return _unwrap(requests.get(url, timeout=30).json())
+    if region:
+        url += f"?region={region}"
+    return _unwrap(_request_json("GET", url))
 
 
 def get_cloudwatch_metrics(tenant_id: str) -> dict[str, Any]:
     url = f"{_base_url()}/{tenant_id}/cloudwatch/metrics"
-    return requests.get(url, timeout=30).json()
+    return _request_json("GET", url)
 
 
 def get_cloudwatch_metric_statistics(
     tenant_id: str, payload: dict[str, Any]
 ) -> dict[str, Any]:
     url = f"{_base_url()}/{tenant_id}/cloudwatch/metric-statistics"
-    response = requests.post(url, json=payload, timeout=30)
-    response.raise_for_status()
-    return response.json()
+    return _request_json("POST", url, json=payload)

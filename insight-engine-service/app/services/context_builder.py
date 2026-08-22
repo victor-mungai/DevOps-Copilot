@@ -13,26 +13,11 @@ from sqlalchemy.orm import Session
 from .. import config
 from ..db import insight_repository
 from ..sources.prometheus_source import PrometheusMetricSource
+from . import rag_service
 
 logger = logging.getLogger("insight-engine")
 
 MAX_INSIGHTS_PER_QUERY = int(os.getenv("MAX_INSIGHTS_PER_QUERY", "20"))
-
-
-def _rag_context(tenant_id: str, resource_id: str | None) -> list[str]:
-    """Pinecone + Voyage RAG is a locked Phase-2 decision but not yet provisioned.
-
-    Returns [] until PINECONE_API_KEY is configured, keeping the pipeline shape
-    stable so real retrieval is a drop-in later. Never raises — RAG is additive.
-    """
-    if not os.getenv("PINECONE_API_KEY"):
-        return []
-    try:
-        # Placeholder for: embed(question) -> pinecone.query(namespace=tenant_id)
-        return []
-    except Exception as exc:  # noqa: BLE001 — RAG must never break the answer
-        logger.warning("RAG retrieval failed: %s", exc)
-        return []
 
 
 def build_ai_context(
@@ -41,6 +26,7 @@ def build_ai_context(
     region: str | None = None,
     resource_id: str | None = None,
     insight_id: str | None = None,
+    query: str | None = None,
 ) -> dict:
     assert tenant_id, "tenant_id is required"  # tenant isolation, defense in depth
 
@@ -82,13 +68,46 @@ def build_ai_context(
         except Exception as exc:  # noqa: BLE001 — metrics are best-effort context
             logger.warning("Metric context fetch failed for %s: %s", resource_id, exc)
 
+    # RAG retrieval: relevant historical insights / incidents / runbooks / docs
+    # for this tenant (no-op unless Pinecone + Voyage are configured).
+    rag_hits = rag_service.retrieve(
+        tenant_id,
+        query or (primary["issue"] if primary else "environment health"),
+        region=region,
+        resource_id=resource_id,
+    )
+
+    # "Related incidents" = other insights sharing this resource's category,
+    # surfaced even without RAG so the answer always has some cross-reference.
+    related = []
+    if primary:
+        related = [
+            i
+            for i in all_insights
+            if i["id"] != primary["id"] and i["category"] == primary["category"]
+        ][:5]
+
+    # Partition insights into current vs historical
+    current_insights = [i for i in insights if i.get("status") == "active"][:20]
+    historical_insights = [i for i in insights if i.get("status") != "active" or i.get("occurrence_count", 1) > 1][:10]
+
     return {
         "tenant_id": tenant_id,
         "region": region,
-        "resource_id": resource_id,
+        "resource": {"resource_id": resource_id} if resource_id else {},
+        "current_metrics": metrics[:10],
+        "historical_metrics": metrics[:10],
+        "current_insights": current_insights,
+        "historical_insights": historical_insights,
+        "rag_context": [h.get("text", "") for h in rag_hits if h.get("text")][:5],
         "primary_insight_id": primary["id"] if primary else None,
         "primary_insight": primary,
         "insights": insights[:MAX_INSIGHTS_PER_QUERY],
         "metrics": metrics,
-        "rag_context": _rag_context(tenant_id, resource_id),
+        "related_incidents": related[:5],
+        "sources": [
+            {"source": h.get("source"), "score": h.get("score"), "resource_id": h.get("metadata", {}).get("resource_id")}
+            for h in rag_hits[:5]
+        ],
+        "rag_enabled": rag_service.rag_enabled(),
     }

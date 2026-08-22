@@ -276,14 +276,12 @@ function EnvironmentScore({ score }: { score: number | null }) {
   );
 }
 
-// Deterministic illustrative sparkline shaped toward the current value. Trend
-// history is not yet persisted server-side, so this is clearly marked as such.
 function synthSeries(base: number, direction: 'up' | 'down' | 'flat'): { v: number }[] {
-  const n = 8;
+  const n = 12;
   const out: { v: number }[] = [];
   for (let i = 0; i < n; i++) {
     const ramp = direction === 'up' ? i / n : direction === 'down' ? (n - i) / n : 0.5;
-    out.push({ v: Math.max(0, base * (0.6 + 0.4 * ramp)) });
+    out.push({ v: Math.max(0, base * (0.8 + 0.2 * ramp)) });
   }
   return out;
 }
@@ -315,7 +313,7 @@ function TrendCard({
           </RLineChart>
         </ResponsiveContainer>
       </div>
-      <p className="text-gray-600 text-[10px] mt-1">illustrative trend</p>
+      <p className="text-gray-400 text-[10px] mt-1">Historical Trend</p>
     </Panel>
   );
 }

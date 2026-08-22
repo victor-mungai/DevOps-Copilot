@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import Optional
 
 import requests
@@ -10,7 +11,7 @@ logger = logging.getLogger("insight-engine")
 
 class PrometheusMetricSource:
     def __init__(self, base_url: Optional[str] = None):
-        self.base_url = (base_url or config.PROMETHEUS_URL).rstrip("/")
+        self.base_url = (base_url or os.getenv("PROMETHEUS_URL", getattr(config, "PROMETHEUS_URL", "http://18.116.65.134:9090"))).rstrip("/")
 
     def _instant_query(self, promql: str) -> Optional[float]:
         url = f"{self.base_url}/api/v1/query"

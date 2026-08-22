@@ -221,6 +221,11 @@ node_modules/
 # Logs
 *.log
 
+# SQLite DBs
+*.db
+*.sqlite
+*.sqlite3
+
 # IDE
 .vscode/
 .idea/   

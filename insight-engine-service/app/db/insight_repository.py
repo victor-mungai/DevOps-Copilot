@@ -1,3 +1,4 @@
+from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -16,13 +17,16 @@ def upsert_insight(db: Session, data: dict) -> Insight:
     ).scalars().first()
 
     if existing:
-        existing.severity = data["severity"]
-        existing.recommendation = data["recommendation"]
-        existing.confidence = data["confidence"]
-        existing.estimated_monthly_waste = data["estimated_monthly_waste"]
-        existing.avg_cpu = data.get("avg_cpu")
-        existing.instance_type = data.get("instance_type")
-        existing.window_days = data.get("window_days")
+        existing.last_detected_at = datetime.utcnow()
+        existing.occurrence_count = (existing.occurrence_count or 1) + 1
+        existing.severity = data.get("severity", existing.severity)
+        existing.recommendation = data.get("recommendation", existing.recommendation)
+        existing.confidence = data.get("confidence", existing.confidence)
+        existing.estimated_monthly_waste = data.get("estimated_monthly_waste", existing.estimated_monthly_waste)
+        existing.evidence = data.get("evidence", existing.evidence)
+        existing.avg_cpu = data.get("avg_cpu", existing.avg_cpu)
+        existing.instance_type = data.get("instance_type", existing.instance_type)
+        existing.window_days = data.get("window_days", existing.window_days)
         db.commit()
         db.refresh(existing)
         return existing

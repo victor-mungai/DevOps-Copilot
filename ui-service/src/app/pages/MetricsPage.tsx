@@ -12,11 +12,11 @@ import {
 } from 'recharts';
 import { LineChart, PlugZap, RefreshCw, Radio } from 'lucide-react';
 import { errorMessage } from '../lib/api';
-import { fetchEc2 } from '../lib/aws';
+import { fetchEc2, fetchLambda, fetchRds } from '../lib/aws';
 import { fetchMetricRange } from '../lib/metrics';
 import type { MetricKind, MetricPoint } from '../lib/metrics';
 import { useTenant } from '../lib/tenant';
-import type { Ec2Row } from '../lib/types';
+import type { Ec2Row, LambdaRow, RdsRow } from '../lib/types';
 import { EmptyState, ErrorBanner, Panel, Spinner } from '../components/dashboard/primitives';
 
 const METRICS: { key: MetricKind; label: string; unit: string; color: string }[] = [
@@ -28,9 +28,10 @@ const METRICS: { key: MetricKind; label: string; unit: string; color: string }[]
 
 const RANGES = [
   { label: '1h', minutes: 60, step: 60 },
-  { label: '3h', minutes: 180, step: 60 },
+  { label: '6h', minutes: 360, step: 120 },
   { label: '24h', minutes: 1440, step: 300 },
   { label: '7d', minutes: 10080, step: 1800 },
+  { label: '30d', minutes: 43200, step: 7200 },
 ];
 
 const POLL_MS = 15000;
@@ -38,12 +39,18 @@ const SYNC_ID = 'metrics-explorer'; // shared → synchronized crosshair across 
 
 type SeriesMap = Record<MetricKind, MetricPoint[]>;
 
+interface GroupedResources {
+  ec2: Ec2Row[];
+  rds: RdsRow[];
+  lambda: LambdaRow[];
+}
+
 export function MetricsPage() {
   const navigate = useNavigate();
   const { tenantId, region, isConnected } = useTenant();
-  const [resources, setResources] = useState<Ec2Row[]>([]);
+  const [resources, setResources] = useState<GroupedResources>({ ec2: [], rds: [], lambda: [] });
   const [resource, setResource] = useState('');
-  const [selected, setSelected] = useState<Set<MetricKind>>(new Set(['cpu']));
+  const [selected, setSelected] = useState<Set<MetricKind>>(new Set(['cpu', 'memory', 'network', 'disk']));
   const [rangeIdx, setRangeIdx] = useState(1);
   const [series, setSeries] = useState<SeriesMap>({ cpu: [], memory: [], network: [], disk: [] });
   const [loading, setLoading] = useState(false);
@@ -53,15 +60,27 @@ export function MetricsPage() {
 
   const range = RANGES[rangeIdx];
 
-  // Resource picker from the region-scoped EC2 inventory.
+  // Resource picker from region-scoped EC2, RDS, and Lambda inventory
   useEffect(() => {
     if (!tenantId) return;
-    void fetchEc2(tenantId, region)
-      .then((rows) => {
-        setResources(rows);
-        setResource((r) => (rows.some((x) => x.resourceId === r) ? r : rows[0]?.resourceId ?? ''));
-      })
-      .catch(() => undefined);
+    Promise.allSettled([
+      fetchEc2(tenantId, region),
+      fetchRds(tenantId, region),
+      fetchLambda(tenantId, region),
+    ]).then(([ec2Res, rdsRes, lambdaRes]) => {
+      const ec2 = ec2Res.status === 'fulfilled' ? ec2Res.value : [];
+      const rds = rdsRes.status === 'fulfilled' ? rdsRes.value : [];
+      const lambda = lambdaRes.status === 'fulfilled' ? lambdaRes.value : [];
+      setResources({ ec2, rds, lambda });
+
+      const allIds = [
+        ...ec2.map((x) => x.resourceId),
+        ...rds.map((x) => x.resourceId),
+        ...lambda.map((x) => x.resourceId),
+      ];
+
+      setResource((prev) => (allIds.includes(prev) ? prev : allIds[0] ?? ''));
+    });
   }, [tenantId, region]);
 
   const load = useCallback(
@@ -93,7 +112,7 @@ export function MetricsPage() {
     void load(true);
   }, [load]);
 
-  // Live polling — every 15s, silent refresh (no spinner flicker).
+  // Live polling — every 15s, silent refresh
   const loadRef = useRef(load);
   loadRef.current = load;
   useEffect(() => {
@@ -101,6 +120,12 @@ export function MetricsPage() {
     const id = setInterval(() => void loadRef.current(false), POLL_MS);
     return () => clearInterval(id);
   }, [live, isConnected]);
+
+  const handleResourceChange = (newResourceId: string) => {
+    setSeries({ cpu: [], memory: [], network: [], disk: [] });
+    setResource(newResourceId);
+    setLoading(true);
+  };
 
   const toggleMetric = (k: MetricKind) =>
     setSelected((prev) => {
@@ -130,6 +155,7 @@ export function MetricsPage() {
   }
 
   const activeMetrics = METRICS.filter((m) => selected.has(m.key));
+  const totalCount = resources.ec2.length + resources.rds.length + resources.lambda.length;
 
   return (
     <div>
@@ -176,15 +202,40 @@ export function MetricsPage() {
           Resource
           <select
             value={resource}
-            onChange={(e) => setResource(e.target.value)}
-            className="bg-[#0B0F17] border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-white min-w-[220px]"
+            onChange={(e) => handleResourceChange(e.target.value)}
+            className="bg-[#0B0F17] border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-white min-w-[260px]"
           >
-            {resources.length === 0 && <option value="">No EC2 resources</option>}
-            {resources.map((r) => (
-              <option key={r.resourceId} value={r.resourceId}>
-                {r.name !== '—' ? `${r.name} (${r.resourceId})` : r.resourceId}
-              </option>
-            ))}
+            {totalCount === 0 && <option value="">No resources found in {region}</option>}
+
+            {resources.ec2.length > 0 && (
+              <optgroup label="EC2 Instances">
+                {resources.ec2.map((r) => (
+                  <option key={r.resourceId} value={r.resourceId}>
+                    {r.name !== '—' ? `${r.name} (${r.resourceId})` : r.resourceId}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+
+            {resources.rds.length > 0 && (
+              <optgroup label="RDS Databases">
+                {resources.rds.map((r) => (
+                  <option key={r.resourceId} value={r.resourceId}>
+                    {r.name} (RDS)
+                  </option>
+                ))}
+              </optgroup>
+            )}
+
+            {resources.lambda.length > 0 && (
+              <optgroup label="Lambda Functions">
+                {resources.lambda.map((r) => (
+                  <option key={r.resourceId} value={r.resourceId}>
+                    {r.name} (Lambda)
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
         </label>
 
@@ -231,7 +282,7 @@ export function MetricsPage() {
 
       {loading && activeMetrics.every((m) => series[m.key].length === 0) ? (
         <div className="h-72 flex items-center justify-center">
-          <Spinner label="Querying Prometheus…" />
+          <Spinner label={`Querying metrics for ${resource || 'resource'}…`} />
         </div>
       ) : (
         <div className="space-y-4">
@@ -256,7 +307,6 @@ function MetricPanel({
   label,
   unit,
   color,
-  kind,
   data,
   showBrush,
 }: {
@@ -290,9 +340,7 @@ function MetricPanel({
           <div>
             <LineChart className="w-8 h-8 text-gray-600 mx-auto mb-2" />
             <p className="text-gray-500 text-sm">
-              {kind === 'cpu'
-                ? 'No CPU samples in this window.'
-                : 'Not collected yet — the collector only emits CPU today.'}
+              No data points found for this resource in the selected window.
             </p>
           </div>
         </div>

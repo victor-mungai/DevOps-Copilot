@@ -15,7 +15,10 @@ async def health():
 async def collect_tenant(tenant_id: str):
     if not tenant_id:
         raise HTTPException(status_code=400, detail="tenant_id is required")
-    metrics = collect_for_tenant(tenant_id)
+    try:
+        metrics = collect_for_tenant(tenant_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"tenant_id": tenant_id, "count": len(metrics)}
 
 
@@ -23,5 +26,8 @@ async def collect_tenant(tenant_id: str):
 async def collect_run(payload: CollectRequest):
     if not payload.tenant_ids:
         raise HTTPException(status_code=400, detail="tenant_ids are required")
-    results = collect_for_tenants(payload.tenant_ids)
+    try:
+        results = collect_for_tenants(payload.tenant_ids)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"results": results}

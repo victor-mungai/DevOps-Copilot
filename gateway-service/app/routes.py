@@ -108,6 +108,7 @@ async def metrics_query(
     resource: str = "",
     minutes: int = 180,
     step: int = 60,
+    region: str = "",
 ):
     # Prefer the authenticated tenant; fall back to the header when auth is off.
     tenant_id = getattr(request.state, "tenant_id", None) or request.headers.get(

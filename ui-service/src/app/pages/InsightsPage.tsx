@@ -50,7 +50,8 @@ export function InsightsPage() {
     setAnalyzing(true);
     setError('');
     try {
-      const res = await apiFetch<AnalyzeResponse>(`/v1/insights/${tenantId}/analyze`, {
+      const analyzePath = region ? `/v1/insights/${tenantId}/analyze?region=${encodeURIComponent(region)}` : `/v1/insights/${tenantId}/analyze`;
+      const res = await apiFetch<AnalyzeResponse>(analyzePath, {
         method: 'POST',
         tenantId,
       });

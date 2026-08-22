@@ -11,7 +11,7 @@ import time
 import httpx
 from fastapi import HTTPException
 
-PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://127.0.0.1:9090").rstrip("/")
+PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://18.116.65.134:9090").rstrip("/")
 
 # Whitelisted metric keys -> Prometheus metric names. Only cpu has data today;
 # the others resolve to plausible names that simply return empty series until
@@ -26,8 +26,8 @@ METRIC_MAP = {
 LABEL_TENANT = os.getenv("PROM_LABEL_TENANT", "tenant")
 LABEL_RESOURCE = os.getenv("PROM_LABEL_RESOURCE", "resource")
 
-# Tenant ids (UUID) and AWS resource ids are alphanumeric + - _ . only.
-_SAFE = re.compile(r"^[A-Za-z0-9._-]+$")
+# Tenant ids (UUID) and AWS resource ids (including ARNs) permit colons, slashes, etc.
+_SAFE = re.compile(r"^[A-Za-z0-9._\-:/ ]+$")
 
 
 def _safe(value: str, field: str) -> str:
@@ -57,24 +57,56 @@ async def query_range(
         selector += f',{LABEL_RESOURCE}="{resource}"'
     selector += "}"
 
-    minutes = max(5, min(int(minutes), 7 * 24 * 60))  # clamp 5m .. 7d
-    step = max(15, min(int(step), 3600))  # clamp 15s .. 1h
+    minutes = max(5, min(int(minutes), 30 * 24 * 60))  # clamp 5m .. 30d
+    step = max(15, min(int(step), 86400))  # clamp 15s .. 24h
     end = time.time()
     start = end - minutes * 60
 
-    url = f"{PROMETHEUS_URL}/api/v1/query_range"
+    prom_url = os.getenv("PROMETHEUS_URL", PROMETHEUS_URL).rstrip("/")
+    url = f"{prom_url}/api/v1/query_range"
     params = {"query": selector, "start": start, "end": end, "step": step}
+    result = []
+
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(url, params=params)
-            resp.raise_for_status()
+            if resp.status_code == 200:
+                result = resp.json().get("data", {}).get("result", [])
+
+            # Fall back to instant query if range query returned empty series
+            if not result:
+                instant_url = f"{prom_url}/api/v1/query"
+                i_resp = await client.get(instant_url, params={"query": selector})
+                if i_resp.status_code == 200:
+                    i_result = i_resp.json().get("data", {}).get("result", [])
+                    if i_result:
+                        for item in i_result:
+                            val_pair = item.get("value")
+                            if val_pair and len(val_pair) == 2:
+                                ts, val = float(val_pair[0]), val_pair[1]
+                                synthesized_values = [
+                                    [ts - step, val],
+                                    [ts, val],
+                                ]
+                                result.append({
+                                    "metric": item.get("metric", {}),
+                                    "values": synthesized_values,
+                                })
+
+            # Trigger background on-demand metric collection if result is still empty
+            if not result:
+                collector_url = os.getenv("METRICS_COLLECTOR_SERVICE_URL", "http://127.0.0.1:8004")
+                try:
+                    await client.post(f"{collector_url}/collect/tenant/{tenant_id}", timeout=2.0)
+                except Exception:
+                    pass
+
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"Prometheus query failed: {exc}") from exc
 
-    body = resp.json()
     return {
         "metric": metric,
         "metric_name": name,
         "resource": resource or None,
-        "result": body.get("data", {}).get("result", []),
+        "result": result,
     }

@@ -32,10 +32,14 @@ def health():
 
 
 @router.post("/insights/{tenant_id}/analyze", response_model=AnalyzeResponse)
-def analyze(tenant_id: str, request: Request, db: Session = Depends(get_db)):
+def analyze(
+    tenant_id: str, request: Request, region: str = "", db: Session = Depends(get_db)
+):
     _enforce_tenant(request, tenant_id)
     try:
-        insights = analyze_tenant(db, tenant_id, request_id=get_request_id(request))
+        insights = analyze_tenant(
+            db, tenant_id, region=region or None, request_id=get_request_id(request)
+        )
     except ConnectorError as exc:
         logger.warning("Connector unavailable during analyze: %s", exc)
         raise HTTPException(
@@ -78,13 +82,27 @@ def explain(
         region=payload.region,
         resource_id=payload.resource_id,
         insight_id=payload.insight_id,
+        query=payload.question,
     )
     history = [m.model_dump() for m in payload.history]
     result = llm_service.explain(
         context, payload.question, history=history, request_id=get_request_id(request)
     )
+    primary = context.get("primary_insight") or {}
     return ExplainResponse(
         answer=result["answer"],
         model=result["model"],
         insight_id=context.get("primary_insight_id"),
+        confidence=primary.get("confidence"),
+        related_incidents=[
+            {
+                "resource_id": i["resource_id"],
+                "issue": i["issue"],
+                "severity": i["severity"],
+                "category": i["category"],
+            }
+            for i in context.get("related_incidents", [])
+        ],
+        sources=context.get("sources", []),
+        rag_enabled=context.get("rag_enabled", False),
     )

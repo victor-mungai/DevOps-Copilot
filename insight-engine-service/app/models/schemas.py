@@ -42,7 +42,24 @@ class ExplainRequest(BaseModel):
     history: list[ChatMessage] = Field(default_factory=list)
 
 
+class RelatedIncident(BaseModel):
+    resource_id: str
+    issue: str
+    severity: str
+    category: str
+
+
+class Source(BaseModel):
+    source: Optional[str] = None
+    score: Optional[float] = None
+    resource_id: Optional[str] = None
+
+
 class ExplainResponse(BaseModel):
     answer: str
     model: str
     insight_id: Optional[str] = None
+    confidence: Optional[str] = None
+    related_incidents: list[RelatedIncident] = Field(default_factory=list)
+    sources: list[Source] = Field(default_factory=list)
+    rag_enabled: bool = False

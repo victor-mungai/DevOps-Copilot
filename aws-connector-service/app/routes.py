@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from botocore.exceptions import BotoCoreError, ClientError
 from sqlalchemy.orm import Session
 
 from .cache.credential_cache import get_cached_credentials, store_credentials
@@ -19,6 +20,21 @@ from .services.resource_service import (
 router = APIRouter()
 
 
+def _aws_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, ClientError):
+        error = exc.response.get("Error", {})
+        code = error.get("Code", "AWSClientError")
+        message = error.get("Message", str(exc))
+        return HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"code": code, "message": message},
+        )
+    return HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail={"code": "AWSConnectorError", "message": str(exc)},
+    )
+
+
 def _get_creds(db: Session, tenant_id: str, region: str) -> dict:
     cached = get_cached_credentials(tenant_id)
     if cached:
@@ -28,8 +44,12 @@ def _get_creds(db: Session, tenant_id: str, region: str) -> dict:
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
-    creds = assume_role(account["role_arn"], account["external_id"], region)
-    store_credentials(tenant_id, creds)
+    try:
+        creds = assume_role(account["role_arn"], account["external_id"], region)
+        store_credentials(tenant_id, creds)
+    except (BotoCoreError, ClientError, RuntimeError, ValueError) as exc:
+        raise _aws_error(exc) from exc
+
     return get_cached_credentials(tenant_id)
 
 
@@ -39,7 +59,10 @@ def get_ec2_instances(
 ):
     region = request.region or "us-east-1"
     creds = _get_creds(db, tenant_id, region)
-    data = list_ec2_instances(creds, region)
+    try:
+        data = list_ec2_instances(creds, region)
+    except (BotoCoreError, ClientError, RuntimeError) as exc:
+        raise _aws_error(exc) from exc
     return AwsResourceResponse(data=data)
 
 
@@ -49,7 +72,10 @@ def get_rds_instances(
 ):
     region = request.region or "us-east-1"
     creds = _get_creds(db, tenant_id, region)
-    data = list_rds_instances(creds, region)
+    try:
+        data = list_rds_instances(creds, region)
+    except (BotoCoreError, ClientError, RuntimeError) as exc:
+        raise _aws_error(exc) from exc
     return AwsResourceResponse(data=data)
 
 
@@ -59,7 +85,10 @@ def get_lambda_functions(
 ):
     region = request.region or "us-east-1"
     creds = _get_creds(db, tenant_id, region)
-    data = list_lambda_functions(creds, region)
+    try:
+        data = list_lambda_functions(creds, region)
+    except (BotoCoreError, ClientError, RuntimeError) as exc:
+        raise _aws_error(exc) from exc
     return AwsResourceResponse(data=data)
 
 
@@ -69,7 +98,10 @@ def get_cloudwatch_metrics(
 ):
     region = request.region or "us-east-1"
     creds = _get_creds(db, tenant_id, region)
-    data = list_cloudwatch_metrics(creds, region)
+    try:
+        data = list_cloudwatch_metrics(creds, region)
+    except (BotoCoreError, ClientError, RuntimeError) as exc:
+        raise _aws_error(exc) from exc
     return AwsResourceResponse(data=data)
 
 
@@ -85,15 +117,18 @@ def get_cloudwatch_metric_stats(
     end_time = payload.end_time or datetime.utcnow()
     start_time = payload.start_time or (end_time - timedelta(minutes=5))
 
-    data = get_cloudwatch_metric_statistics(
-        creds,
-        region,
-        payload.namespace,
-        payload.metric_name,
-        payload.dimensions,
-        start_time,
-        end_time,
-        payload.period,
-        payload.statistics,
-    )
+    try:
+        data = get_cloudwatch_metric_statistics(
+            creds,
+            region,
+            payload.namespace,
+            payload.metric_name,
+            payload.dimensions,
+            start_time,
+            end_time,
+            payload.period,
+            payload.statistics,
+        )
+    except (BotoCoreError, ClientError, RuntimeError) as exc:
+        raise _aws_error(exc) from exc
     return AwsResourceResponse(data=data)
