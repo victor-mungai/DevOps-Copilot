@@ -1,6 +1,6 @@
 import os
 
-RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
+RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "18.116.65.134")
 RABBITMQ_PORT = int(os.getenv("RABBITMQ_PORT", "5672"))
 RABBITMQ_USER = os.getenv("RABBITMQ_USER", "devops")
 RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "devops")
