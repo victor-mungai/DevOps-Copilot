@@ -1,9 +1,13 @@
 import os
+from dotenv import load_dotenv
 
-RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "18.116.65.134")
+# Load environment configuration from .env file if available
+load_dotenv()
+
+RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
 RABBITMQ_PORT = int(os.getenv("RABBITMQ_PORT", "5672"))
-RABBITMQ_USER = os.getenv("RABBITMQ_USER", "devops")
-RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "devops")
+RABBITMQ_USER = os.getenv("RABBITMQ_USER", "guest")
+RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "guest")
 RABBITMQ_VHOST = os.getenv("RABBITMQ_VHOST", "/")
 
 EXCHANGE_NAME = "devops.events"
