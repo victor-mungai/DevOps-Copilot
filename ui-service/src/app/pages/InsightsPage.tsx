@@ -13,6 +13,8 @@ import {
   Spinner,
 } from '../components/dashboard/primitives';
 
+const ALL = 'all';
+
 interface AsyncJobResponse {
   job_id?: string;
   status?: string;
