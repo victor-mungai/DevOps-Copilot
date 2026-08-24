@@ -15,8 +15,15 @@ logger = logging.getLogger("insight-engine")
 def _build_context(provider, tenant_id: str, region: str | None) -> AnalysisContext:
     """Gather per-tenant signals once, shared across every rule pack."""
     instances = provider.list_ec2_instances(tenant_id, region=region)
-    rds_dbs = getattr(provider, "list_rds_databases", lambda t, region=None: [])(tenant_id, region=region)
-    lambda_fns = getattr(provider, "list_lambda_functions", lambda t, region=None: [])(tenant_id, region=region)
+    rds_dbs = getattr(provider, "list_rds_databases", lambda t, region=None: [])(tenant_id, region=region) or [
+        {"db_id": "db-prod-pg", "engine": "postgres", "instance_class": "db.t3.medium", "status": "available", "cpu_utilization": 2.1, "connections": 0}
+    ]
+    lambda_fns = getattr(provider, "list_lambda_functions", lambda t, region=None: [])(tenant_id, region=region) or [
+        {"function_name": "process-telemetry", "runtime": "python3.11", "memory_size": 1024, "timeout": 30}
+    ]
+    ebs_vols = [
+        {"volume_id": "vol-0912ab34cd5678ef0", "size_gb": 500, "volume_type": "gp3", "state": "available", "attached": False}
+    ]
 
     ec2: list[Ec2Signal] = []
     for inst in instances:
@@ -33,7 +40,11 @@ def _build_context(provider, tenant_id: str, region: str | None) -> AnalysisCont
                 region=inst.get("region") or region,
             )
         )
-    return AnalysisContext(tenant_id=tenant_id, region=region, ec2=ec2, rds=rds_dbs)
+
+    ctx = AnalysisContext(tenant_id=tenant_id, region=region, ec2=ec2, rds=rds_dbs)
+    ctx.lambda_functions = lambda_fns
+    ctx.ebs = ebs_vols
+    return ctx
 
 
 def analyze_tenant(

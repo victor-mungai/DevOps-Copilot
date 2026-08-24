@@ -15,10 +15,12 @@ import { EmptyState, Panel } from '../components/dashboard/primitives';
 
 // Quick actions execute on click (no typing required).
 const QUICK_ACTIONS = [
+  'Why did our AWS spend increase?',
+  'Where can we save money?',
+  'Are we on track to exceed budget?',
+  'Show top cost drivers',
+  'Which resources are costing us the most?',
   'Find idle resources',
-  'Show cost optimization opportunities',
-  'Show unhealthy infrastructure',
-  'Summarize my environment',
 ];
 
 const DAY_ORDER: DayGroup[] = ['Today', 'Yesterday', 'Older'];

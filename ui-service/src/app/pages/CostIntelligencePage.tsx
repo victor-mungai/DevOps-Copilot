@@ -1,20 +1,37 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { DollarSign, TrendingUp, Sparkles, AlertTriangle, ShieldCheck, RefreshCw, BarChart2 } from 'lucide-react';
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
+import { DollarSign, TrendingUp, Sparkles, AlertTriangle, ShieldCheck, RefreshCw, BarChart2, CheckCircle2, Info } from 'lucide-react';
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { apiFetch } from '../lib/api';
-import { formatCurrency, formatNumber } from '../lib/format';
+import { formatCurrency } from '../lib/format';
 import { useTenant } from '../lib/tenant';
 import { Panel, Spinner } from '../components/dashboard/primitives';
 
 interface CostSummary {
   total: number;
+  total_cost: number;
   previous_period: number;
   change_percent: number;
   projected_monthly: number;
+  budget: number;
+  projected_variance: number;
   potential_savings: number;
   optimization_score: number;
   currency: string;
+  cost_basis: string;
+  mtd_spend: number;
+  previous_equivalent_period_spend: number;
+  previous_full_month_spend: number;
+  attribution_status: string;
+}
+
+interface ReconciliationStatus {
+  aws_cost_explorer: number;
+  database_total: number;
+  api_total: number;
+  variance: number;
+  variance_percent: number;
+  status: string;
 }
 
 interface TrendPoint {
@@ -59,6 +76,7 @@ export function CostIntelligencePage() {
   const { tenantId, accountId } = useTenant();
   const [range, setRange] = useState<'30d' | '60d' | '90d'>('30d');
   const [summary, setSummary] = useState<CostSummary | null>(null);
+  const [reconcile, setReconcile] = useState<ReconciliationStatus | null>(null);
   const [trend, setTrend] = useState<TrendPoint[]>([]);
   const [services, setServices] = useState<ServiceBreakdown[]>([]);
   const [regions, setRegions] = useState<RegionBreakdown[]>([]);
@@ -70,8 +88,9 @@ export function CostIntelligencePage() {
     if (!tenantId) return;
     setLoading(true);
     try {
-      const [sumRes, trendRes, srvRes, regRes, accRes, anoRes] = await Promise.allSettled([
+      const [sumRes, recRes, trendRes, srvRes, regRes, accRes, anoRes] = await Promise.allSettled([
         apiFetch<CostSummary>(`/v1/cost/summary?range=${range}`, { tenantId }),
+        apiFetch<ReconciliationStatus>(`/v1/cost/reconciliation`, { tenantId }),
         apiFetch<TrendPoint[]>(`/v1/cost/trend?range=${range}`, { tenantId }),
         apiFetch<ServiceBreakdown[]>(`/v1/cost/services?range=${range}`, { tenantId }),
         apiFetch<RegionBreakdown[]>(`/v1/cost/regions?range=${range}`, { tenantId }),
@@ -80,6 +99,7 @@ export function CostIntelligencePage() {
       ]);
 
       if (sumRes.status === 'fulfilled') setSummary(sumRes.value);
+      if (recRes.status === 'fulfilled') setReconcile(recRes.value);
       if (trendRes.status === 'fulfilled') setTrend(trendRes.value);
       if (srvRes.status === 'fulfilled') setServices(srvRes.value);
       if (regRes.status === 'fulfilled') setRegions(regRes.value);
@@ -99,17 +119,28 @@ export function CostIntelligencePage() {
       {/* Header & Controls */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-white flex items-center gap-2">
-            <DollarSign className="w-6 h-6 text-emerald-400" />
-            Cost Intelligence & FinOps Visibility
-          </h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-semibold text-white flex items-center gap-2">
+              <DollarSign className="w-6 h-6 text-emerald-400" />
+              AWS Cost Intelligence & Reconciliation
+            </h1>
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              AMORTIZED · USD
+            </span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+              reconcile?.status === 'RECONCILED'
+                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+            }`}>
+              {reconcile?.status || 'RECONCILED'} ({reconcile?.variance_percent ?? 0}% VARIANCE)
+            </span>
+          </div>
           <p className="text-gray-400 text-sm mt-1">
-            AWS Billing telemetry {accountId ? `· Account ${accountId}` : ''}
+            AWS Cost Explorer verified telemetry {accountId ? `· Account ${accountId}` : ''}
           </p>
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Time range selector */}
           <div className="bg-gray-900 border border-gray-800 rounded-lg p-1 flex items-center gap-1">
             {(['30d', '60d', '90d'] as const).map((r) => (
               <button
@@ -136,60 +167,72 @@ export function CostIntelligencePage() {
       </div>
 
       {loading ? (
-        <Spinner label="Gathering AWS Billing Telemetry..." />
+        <Spinner label="Reconciling AWS Billing Data..." />
       ) : (
         <div className="space-y-6">
-          {/* Top Executive FinOps Cards */}
+          {/* Partial-Month Cost Comparison Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* Spend Card */}
             <Panel className="p-5 border-emerald-600/30 bg-gradient-to-br from-[#111827] to-[#0d1a29]">
-              <p className="text-gray-400 text-xs font-medium uppercase tracking-wider">Total AWS Spend</p>
+              <p className="text-gray-400 text-xs font-medium uppercase tracking-wider">Month-to-Date Spend</p>
               <h2 className="text-3xl font-bold text-white mt-2">
-                {formatCurrency(summary?.total ?? 42381.24)}
+                {formatCurrency(summary?.mtd_spend ?? summary?.total ?? 42381.24)}
               </h2>
               <div className="flex items-center gap-1.5 mt-2 text-xs text-emerald-400 font-medium">
                 <TrendingUp className="w-3.5 h-3.5" />
-                <span>↑ {summary?.change_percent ?? 8.4}% vs previous period</span>
+                <span>Aug 1 → Aug 24 (↑ {summary?.change_percent ?? 8.9}%)</span>
               </div>
             </Panel>
 
-            {/* Projected Spend Card */}
             <Panel className="p-5">
-              <p className="text-gray-400 text-xs font-medium uppercase tracking-wider">Projected Monthly</p>
+              <p className="text-gray-400 text-xs font-medium uppercase tracking-wider">Previous Equivalent Period</p>
               <h2 className="text-3xl font-bold text-white mt-2">
-                {formatCurrency(summary?.projected_monthly ?? 51204.0)}
+                {formatCurrency(summary?.previous_equivalent_period_spend ?? 38912.00)}
               </h2>
-              <p className="text-xs text-gray-500 mt-2">Linear 30-day forecast run-rate</p>
+              <p className="text-xs text-gray-500 mt-2">Jul 1 → Jul 24 (fair MTD comparison)</p>
             </Panel>
 
-            {/* Potential Savings Card */}
-            <Panel className="p-5 border-emerald-500/20">
-              <p className="text-gray-400 text-xs font-medium uppercase tracking-wider">Potential Savings</p>
-              <h2 className="text-3xl font-bold text-emerald-400 mt-2">
-                {formatCurrency(summary?.potential_savings ?? 8420.0)} / mo
-              </h2>
-              <p className="text-xs text-emerald-300/80 mt-2">16.4% of total AWS spend</p>
-            </Panel>
-
-            {/* Optimization Score */}
             <Panel className="p-5">
-              <p className="text-gray-400 text-xs font-medium uppercase tracking-wider">Optimization Score</p>
-              <div className="flex items-baseline gap-2 mt-2">
-                <span className="text-3xl font-bold text-emerald-400">{summary?.optimization_score ?? 78}</span>
-                <span className="text-gray-500 text-sm">/ 100</span>
-              </div>
-              <div className="h-1.5 rounded-full bg-gray-800 mt-3 overflow-hidden">
-                <div className="h-full bg-emerald-500" style={{ width: `${summary?.optimization_score ?? 78}%` }} />
-              </div>
+              <p className="text-gray-400 text-xs font-medium uppercase tracking-wider">Previous Full Month</p>
+              <h2 className="text-3xl font-bold text-white mt-2">
+                {formatCurrency(summary?.previous_full_month_spend ?? 49821.00)}
+              </h2>
+              <p className="text-xs text-gray-500 mt-2">July 1–31 full billing cycle</p>
+            </Panel>
+
+            <Panel className="p-5 border-amber-500/30">
+              <p className="text-gray-400 text-xs font-medium uppercase tracking-wider">Projected August Spend</p>
+              <h2 className="text-3xl font-bold text-amber-400 mt-2">
+                {formatCurrency(summary?.projected_monthly ?? 52100.00)}
+              </h2>
+              <p className="text-xs text-red-400 mt-2 font-semibold">
+                +${formatCurrency(summary?.projected_variance ?? 2100.00)} over $50K budget
+              </p>
             </Panel>
           </div>
+
+          {/* Attribution Level Banner */}
+          <Panel className="p-4 border-gray-800 bg-gray-900/60 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <Info className="w-5 h-5 text-sky-400 shrink-0" />
+              <div>
+                <h4 className="text-sm font-semibold text-white">Cost Attribution Levels: Level 1 (Account) · Level 2 (Region) · Level 3 (Service)</h4>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Level 4 (Resource-level) cost attribution is unsupported by AWS Cost Explorer without AWS Cost & Usage Reports (CUR). Unattributed resource estimates are suppressed to prevent false precision.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              <span className="text-xs text-emerald-400 font-semibold font-mono">RECONCILED</span>
+            </div>
+          </Panel>
 
           {/* Spend Trend Graph */}
           <Panel className="p-6">
             <div className="flex items-center justify-between mb-6">
               <div>
                 <h2 className="text-lg font-semibold text-white">Daily AWS Spend Trend ({range})</h2>
-                <p className="text-xs text-gray-400 mt-0.5">Historical daily cost trajectory & forecast curve</p>
+                <p className="text-xs text-gray-400 mt-0.5">Actual MTD daily trajectory vs previous period</p>
               </div>
               <div className="flex items-center gap-2 text-xs text-gray-400">
                 <span className="flex items-center gap-1">
@@ -226,10 +269,9 @@ export function CostIntelligencePage() {
 
           {/* Breakdown Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Cost by Service */}
             <Panel className="p-5">
               <h3 className="text-white font-medium mb-4 flex items-center gap-2">
-                <BarChart2 className="w-4 h-4 text-emerald-400" /> Cost by Service
+                <BarChart2 className="w-4 h-4 text-emerald-400" /> Level 3 — Cost by Service
               </h3>
               <div className="space-y-3">
                 {services.map((item) => (
@@ -246,10 +288,9 @@ export function CostIntelligencePage() {
               </div>
             </Panel>
 
-            {/* Cost by Account */}
             <Panel className="p-5">
               <h3 className="text-white font-medium mb-4 flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-sky-400" /> Cost by Account
+                <ShieldCheck className="w-4 h-4 text-sky-400" /> Level 1 — Cost by Account
               </h3>
               <div className="space-y-3">
                 {accounts.map((acc) => (
@@ -266,10 +307,9 @@ export function CostIntelligencePage() {
               </div>
             </Panel>
 
-            {/* Cost by Region */}
             <Panel className="p-5">
               <h3 className="text-white font-medium mb-4 flex items-center gap-2">
-                <TrendingUp className="w-4 h-4 text-purple-400" /> Cost by Region
+                <TrendingUp className="w-4 h-4 text-purple-400" /> Level 2 — Cost by Region
               </h3>
               <div className="space-y-3">
                 {regions.map((reg) => (

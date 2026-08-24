@@ -12,6 +12,7 @@ from ..services.cost_collection import (
     get_cost_summary,
     get_cost_trend,
     ingest_cost_records,
+    reconcile_costs,
 )
 
 router = APIRouter()
@@ -97,6 +98,14 @@ def anomalies(
 ):
     days = 90 if range == "90d" else (60 if range == "60d" else 30)
     return get_cost_anomalies(db, tenant_id=tenant_id, range_days=days)
+
+
+@router.get("/cost/reconciliation")
+def reconciliation(
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(_extract_tenant),
+):
+    return reconcile_costs(db, tenant_id=tenant_id)
 
 
 @router.post("/cost/collect")

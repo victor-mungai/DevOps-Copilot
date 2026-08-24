@@ -142,6 +142,11 @@ async def insights_analyze(request: Request, tenant_id: str):
     )
 
 
+@router.get("/v1/insights/coverage")
+async def insights_coverage(request: Request):
+    return await forward_request("insight", "/insights/coverage", request)
+
+
 @router.get("/v1/insights/{tenant_id}")
 async def insights_list(request: Request, tenant_id: str):
     return await forward_request("insight", f"/insights/{tenant_id}", request)
@@ -192,6 +197,11 @@ async def cost_forecast(request: Request):
 @router.get("/v1/cost/anomalies")
 async def cost_anomalies(request: Request):
     return await forward_request("cost", "/cost/anomalies", request)
+
+
+@router.get("/v1/cost/reconciliation")
+async def cost_reconciliation(request: Request):
+    return await forward_request("cost", "/cost/reconciliation", request)
 
 
 @router.post("/v1/cost/collect")
