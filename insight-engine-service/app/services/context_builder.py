@@ -105,30 +105,36 @@ def build_ai_context(
 
     if not cost_context:
         cost_context = {
-            "total": 42381.24,
-            "previous_period": 39102.11,
-            "change_percent": 8.4,
+            "total": 0.0,
+            "previous_period": 0.0,
+            "change_percent": 0.0,
             "currency": "USD",
-            "projected_monthly": 51204.0,
-            "potential_savings": 8420.0,
-            "optimization_score": 78,
+            "projected_monthly": 0.0,
+            "potential_savings": 0.0,
+            "optimization_score": 100,
         }
 
+    tot_savings = sum(float(i.get("estimated_monthly_waste", 0.0) or 0.0) for i in current_insights)
+    proj_monthly = float(cost_context.get("projected_monthly", 0.0) or cost_context.get("total", 0.0) or 0.0)
+
+    # Build dynamic savings waterfall from actual active insights
+    waterfall = [{"category": "Current AWS Spend", "amount": proj_monthly}]
+    for ins in current_insights:
+        w_amt = float(ins.get("estimated_monthly_waste", 0.0) or 0.0)
+        if w_amt > 0:
+            cat_label = ins.get("title") or ins.get("issue") or "Resource Waste"
+            waterfall.append({"category": cat_label, "amount": -round(w_amt, 2)})
+    
+    waterfall.append({"category": "Optimized Estimate", "amount": max(0.0, round(proj_monthly - tot_savings, 2))})
+
     optimization_context = {
-        "potential_monthly_savings": 8420.0,
-        "potential_annual_savings": 101040.0,
+        "potential_monthly_savings": round(tot_savings, 2),
+        "potential_annual_savings": round(tot_savings * 12.0, 2),
         "resources_with_opportunities": len(current_insights),
         "priority_high": len([i for i in current_insights if i.get("severity") == "high"]),
         "priority_medium": len([i for i in current_insights if i.get("severity") == "medium"]),
         "priority_low": len([i for i in current_insights if i.get("severity") == "low"]),
-        "savings_waterfall": [
-            {"category": "Current AWS Spend", "amount": cost_context.get("projected_monthly", 51204.0)},
-            {"category": "Idle EC2 Cleanup", "amount": -3420.0},
-            {"category": "RDS Rightsizing", "amount": -2180.0},
-            {"category": "EBS Cleanup", "amount": -1120.0},
-            {"category": "Lambda Optimization", "amount": -840.0},
-            {"category": "Optimized Estimate", "amount": cost_context.get("projected_monthly", 51204.0) - 7560.0},
-        ],
+        "savings_waterfall": waterfall,
     }
 
     return {

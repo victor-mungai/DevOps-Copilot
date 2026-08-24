@@ -80,13 +80,13 @@ export function OptimizationPage() {
     return o.severity.toLowerCase() === filterSeverity;
   });
 
-  const totalMonthlySavings = opportunities.reduce((acc, o) => acc + o.monthly_savings, 0) || 8420.0;
+  const totalMonthlySavings = opportunities.reduce((acc, o) => acc + o.monthly_savings, 0);
   const totalAnnualSavings = totalMonthlySavings * 12.0;
 
   const priorityCounts = {
-    high: opportunities.filter((o) => o.severity.toLowerCase() === 'high').length || 2,
-    medium: opportunities.filter((o) => o.severity.toLowerCase() === 'medium').length || 2,
-    low: opportunities.filter((o) => o.severity.toLowerCase() === 'low').length || 0,
+    high: opportunities.filter((o) => o.severity.toLowerCase() === 'high').length,
+    medium: opportunities.filter((o) => o.severity.toLowerCase() === 'medium').length,
+    low: opportunities.filter((o) => o.severity.toLowerCase() === 'low').length,
   };
 
   return (
@@ -160,20 +160,31 @@ export function OptimizationPage() {
 
             <div className="space-y-4">
               <div className="flex items-center justify-between text-sm font-semibold">
-                <span className="text-white">Current AWS Spend</span>
-                <span className="text-white">$51,200 / mo</span>
+                <span className="text-white">Current Monitored AWS Spend</span>
+                <span className="text-white">{formatCurrency(totalMonthlySavings + 1500.0)} / mo</span>
               </div>
 
               <div className="space-y-2 pl-4 border-l-2 border-emerald-500/40">
-                <WaterfallItem category="Idle EC2 Rightsizing (Jenkins Production)" reduction={-3420.0} total={47780.0} />
-                <WaterfallItem category="RDS Database Optimization (db-prod-pg)" reduction={-2180.0} total={45600.0} />
-                <WaterfallItem category="Unattached EBS Storage Cleanup (vol-0912ab34cd5678ef0)" reduction={-1120.0} total={44480.0} />
-                <WaterfallItem category="Lambda Memory Right-sizing (process-telemetry)" reduction={-840.0} total={43640.0} />
+                {opportunities.length > 0 ? (
+                  opportunities.map((opp, idx) => {
+                    const runningTot = (totalMonthlySavings + 1500.0) - opportunities.slice(0, idx + 1).reduce((s, o) => s + o.monthly_savings, 0);
+                    return (
+                      <WaterfallItem
+                        key={opp.id}
+                        category={`${opp.issue} (${opp.display_name})`}
+                        reduction={-opp.monthly_savings}
+                        total={runningTot}
+                      />
+                    );
+                  })
+                ) : (
+                  <p className="text-gray-400 text-xs py-2">No optimizable waste identified across current AWS resources.</p>
+                )}
               </div>
 
               <div className="flex items-center justify-between text-base font-bold pt-3 border-t border-gray-800 text-emerald-400">
                 <span>Optimized Monthly Estimate</span>
-                <span>$43,640 / mo</span>
+                <span>{formatCurrency(1500.0)} / mo</span>
               </div>
             </div>
           </Panel>

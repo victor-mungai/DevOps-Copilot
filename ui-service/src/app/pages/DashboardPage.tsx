@@ -132,31 +132,31 @@ export function DashboardPage() {
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
             <StatCard
               label="Month-to-Date Spend"
-              value={formatCurrency(costSummary?.mtd_spend ?? costSummary?.total ?? 42381.24)}
-              hint={`Aug 1 → Aug 24 (↑ ${costSummary?.change_percent ?? 8.9}%)`}
+              value={formatCurrency(costSummary?.mtd_spend ?? costSummary?.total ?? 0.0)}
+              hint={`Current billing period (↑ ${costSummary?.change_percent ?? 0}%)`}
               accent="text-white"
             />
             <StatCard
               label="Projected Monthly"
-              value={formatCurrency(costSummary?.projected_monthly ?? 52100.00)}
-              hint="Forecasted August total"
+              value={formatCurrency(costSummary?.projected_monthly ?? 0.0)}
+              hint="Forecasted monthly total"
               accent="text-amber-400"
             />
             <StatCard
               label="Budget Variance"
-              value={`+${formatCurrency(costSummary?.projected_variance ?? 2100.00)}`}
-              hint={`Over $${((costSummary?.budget ?? 50000)/1000).toFixed(1)}K target`}
+              value={`+${formatCurrency(costSummary?.projected_variance ?? 0.0)}`}
+              hint={`Over $${((costSummary?.budget ?? 50000)/1000).toFixed(0)}K target`}
               accent="text-red-400"
             />
             <StatCard
               label="Potential Savings"
-              value={formatCurrency(costSummary?.potential_savings ?? 8420.00)}
+              value={formatCurrency(costSummary?.potential_savings ?? 0.0)}
               hint="Optimizable opportunity"
               accent="text-emerald-400"
             />
             <StatCard
               label="Optimization Score"
-              value={`${costSummary?.optimization_score ?? 78} / 100`}
+              value={`${costSummary?.optimization_score ?? 100} / 100`}
               hint="FinOps Efficiency Score"
               accent="text-emerald-400"
             />

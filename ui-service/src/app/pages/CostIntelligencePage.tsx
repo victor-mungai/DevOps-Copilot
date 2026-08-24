@@ -175,18 +175,18 @@ export function CostIntelligencePage() {
             <Panel className="p-5 border-emerald-600/30 bg-gradient-to-br from-[#111827] to-[#0d1a29]">
               <p className="text-gray-400 text-xs font-medium uppercase tracking-wider">Month-to-Date Spend</p>
               <h2 className="text-3xl font-bold text-white mt-2">
-                {formatCurrency(summary?.mtd_spend ?? summary?.total ?? 42381.24)}
+                {formatCurrency(summary?.mtd_spend ?? summary?.total ?? 0.0)}
               </h2>
               <div className="flex items-center gap-1.5 mt-2 text-xs text-emerald-400 font-medium">
                 <TrendingUp className="w-3.5 h-3.5" />
-                <span>Aug 1 → Aug 24 (↑ {summary?.change_percent ?? 8.9}%)</span>
+                <span>Aug 1 → Aug 24 (↑ {summary?.change_percent ?? 0}%)</span>
               </div>
             </Panel>
 
             <Panel className="p-5">
               <p className="text-gray-400 text-xs font-medium uppercase tracking-wider">Previous Equivalent Period</p>
               <h2 className="text-3xl font-bold text-white mt-2">
-                {formatCurrency(summary?.previous_equivalent_period_spend ?? 38912.00)}
+                {formatCurrency(summary?.previous_equivalent_period_spend ?? 0.0)}
               </h2>
               <p className="text-xs text-gray-500 mt-2">Jul 1 → Jul 24 (fair MTD comparison)</p>
             </Panel>
@@ -194,18 +194,18 @@ export function CostIntelligencePage() {
             <Panel className="p-5">
               <p className="text-gray-400 text-xs font-medium uppercase tracking-wider">Previous Full Month</p>
               <h2 className="text-3xl font-bold text-white mt-2">
-                {formatCurrency(summary?.previous_full_month_spend ?? 49821.00)}
+                {formatCurrency(summary?.previous_full_month_spend ?? 0.0)}
               </h2>
               <p className="text-xs text-gray-500 mt-2">July 1–31 full billing cycle</p>
             </Panel>
 
             <Panel className="p-5 border-amber-500/30">
-              <p className="text-gray-400 text-xs font-medium uppercase tracking-wider">Projected August Spend</p>
+              <p className="text-gray-400 text-xs font-medium uppercase tracking-wider">Projected Monthly Spend</p>
               <h2 className="text-3xl font-bold text-amber-400 mt-2">
-                {formatCurrency(summary?.projected_monthly ?? 52100.00)}
+                {formatCurrency(summary?.projected_monthly ?? 0.0)}
               </h2>
               <p className="text-xs text-red-400 mt-2 font-semibold">
-                +${formatCurrency(summary?.projected_variance ?? 2100.00)} over $50K budget
+                +${formatCurrency(summary?.projected_variance ?? 0.0)} over ${((summary?.budget ?? 50000)/1000).toFixed(0)}K budget
               </p>
             </Panel>
           </div>
