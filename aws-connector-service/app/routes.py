@@ -53,6 +53,16 @@ def _get_creds(db: Session, tenant_id: str, region: str) -> dict:
     return get_cached_credentials(tenant_id)
 
 
+@router.get("/aws/{tenant_id}/credentials")
+def get_tenant_credentials(
+    tenant_id: str, region: str = "us-east-1", db: Session = Depends(get_db)
+):
+    try:
+        return _get_creds(db, tenant_id, region)
+    except HTTPException:
+        return {}
+
+
 @router.get("/aws/{tenant_id}/ec2/instances", response_model=AwsResourceResponse)
 def get_ec2_instances(
     tenant_id: str, request: AwsClientRequest = Depends(), db: Session = Depends(get_db)
