@@ -27,12 +27,13 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
+  { to: '/cost-intelligence', label: 'Cost Intelligence', icon: DollarSign },
   { to: '/infrastructure', label: 'Infrastructure', icon: Server },
   { to: '/metrics', label: 'Metrics', icon: LineChart },
   { to: '/insights', label: 'Insights', icon: Lightbulb },
-  { to: '/copilot', label: 'AI Copilot', icon: Bot },
-  { to: '/cost', label: 'Cost Optimization', icon: DollarSign },
+  { to: '/optimization', label: 'Optimization', icon: PlugZap },
   { to: '/alerts', label: 'Alerts', icon: Bell },
+  { to: '/copilot', label: 'AI Copilot', icon: Bot },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
 
@@ -170,9 +171,11 @@ export function AppShell() {
 function titleForPath(path: string): string {
   const map: Record<string, string> = {
     '/': 'Dashboard',
+    '/cost-intelligence': 'Cost Intelligence',
     '/infrastructure': 'Infrastructure',
     '/metrics': 'Metrics',
     '/insights': 'Insights',
+    '/optimization': 'Optimization',
     '/copilot': 'AI Copilot',
     '/cost': 'Cost Optimization',
     '/alerts': 'Alerts',

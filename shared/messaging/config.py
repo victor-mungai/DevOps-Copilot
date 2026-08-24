@@ -17,11 +17,13 @@ QUEUE_METRICS = "metrics.queue"
 QUEUE_INSIGHTS = "insights.queue"
 QUEUE_RAG = "rag.queue"
 QUEUE_NOTIFICATIONS = "notifications.queue"
+QUEUE_COST = "cost.queue"
 
 DLQ_METRICS = "metrics.dlq"
 DLQ_INSIGHTS = "insights.dlq"
 DLQ_RAG = "rag.dlq"
 DLQ_NOTIFICATIONS = "notifications.dlq"
+DLQ_COST = "cost.dlq"
 
 DEFAULT_PREFETCH = 10
 MAX_RETRIES = 3

@@ -1,4 +1,7 @@
 from datetime import datetime, timezone
+EVENT_COST_COLLECTION_REQUESTED = "cost.collection.requested"
+EVENT_COST_COLLECTION_COMPLETED = "cost.collection.completed"
+
 import json
 import uuid
 from typing import Any, Dict, Optional

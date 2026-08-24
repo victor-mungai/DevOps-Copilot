@@ -9,6 +9,7 @@ def get_service_url(name: str) -> str:
         ),
         "metrics": os.getenv("METRICS_SERVICE_URL", "http://127.0.0.1:8004"),
         "insight": os.getenv("INSIGHT_SERVICE_URL", "http://127.0.0.1:8005"),
+        "cost": os.getenv("COST_SERVICE_URL", "http://127.0.0.1:8006"),
         "ui": os.getenv("UI_SERVICE_URL", "http://127.0.0.1:8002"),
     }
 

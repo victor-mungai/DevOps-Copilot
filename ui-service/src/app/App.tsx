@@ -9,6 +9,8 @@ import { InfrastructurePage } from './pages/InfrastructurePage';
 import { MetricsPage } from './pages/MetricsPage';
 import { InsightsPage } from './pages/InsightsPage';
 import { CopilotPage } from './pages/CopilotPage';
+import { CostIntelligencePage } from './pages/CostIntelligencePage';
+import { OptimizationPage } from './pages/OptimizationPage';
 import { CostPage } from './pages/CostPage';
 import { AlertsPage } from './pages/AlertsPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -28,9 +30,11 @@ export default function App() {
             <Route element={<RequireAuth />}>
               <Route element={<AppShell />}>
                 <Route index element={<DashboardLanding />} />
+                <Route path="cost-intelligence" element={<CostIntelligencePage />} />
                 <Route path="infrastructure" element={<InfrastructurePage />} />
                 <Route path="metrics" element={<MetricsPage />} />
                 <Route path="insights" element={<InsightsPage />} />
+                <Route path="optimization" element={<OptimizationPage />} />
                 <Route path="copilot" element={<CopilotPage />} />
                 <Route path="cost" element={<CostPage />} />
                 <Route path="alerts" element={<AlertsPage />} />

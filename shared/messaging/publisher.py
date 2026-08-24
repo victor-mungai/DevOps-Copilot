@@ -38,3 +38,7 @@ def publish(
     else:
         logger.error("Failed to publish event %s for tenant %s", event_type, tenant_id)
     return success
+
+
+publish_event = publish
+

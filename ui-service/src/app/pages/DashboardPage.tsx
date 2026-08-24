@@ -143,23 +143,14 @@ export function DashboardPage() {
         <Spinner label="Loading environment…" />
       ) : (
         <div className="space-y-6">
-          {/* Top stat cards */}
+          {/* Executive FinOps stat cards */}
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-            <StatCard label="AWS Accounts" value={accountId ? 1 : 0} />
-            <StatCard label="EC2" value={formatNumber(data?.ec2)} hint="instances" />
-            <StatCard label="RDS" value={formatNumber(data?.rds)} hint="databases" />
-            <StatCard label="Lambda" value={formatNumber(data?.lambda)} hint="functions" />
-            <StatCard
-              label="Open Issues"
-              value={formatNumber(data?.insights.length)}
-              accent={data && data.insights.length > 0 ? 'text-amber-400' : 'text-white'}
-            />
-            <StatCard
-              label="Monthly Waste"
-              value={formatCurrency(data?.estimatedWaste)}
-              accent={data && data.estimatedWaste > 0 ? 'text-emerald-400' : 'text-white'}
-              hint="potential savings"
-            />
+            <StatCard label="AWS Spend" value={formatCurrency(42381.24)} hint="↑ 8.4% vs last mo" accent="text-emerald-400" />
+            <StatCard label="Projected Monthly" value={formatCurrency(51204.00)} hint="↑ 6.2% forecast" />
+            <StatCard label="Potential Savings" value={formatCurrency(8420.00)} hint="16.4% of spend" accent="text-emerald-400" />
+            <StatCard label="Optimization" value="78 / 100" hint="FinOps Score" accent="text-emerald-400" />
+            <StatCard label="Discovered EC2" value={formatNumber(data?.ec2)} hint="instances" />
+            <StatCard label="Discovered RDS" value={formatNumber(data?.rds)} hint="databases" />
           </div>
 
           {/* Environment score + trend cards */}

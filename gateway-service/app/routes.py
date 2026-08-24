@@ -157,3 +157,44 @@ async def insights_explain(request: Request, tenant_id: str):
     return await forward_request(
         "insight", f"/insights/{tenant_id}/explain", request
     )
+
+
+@router.get("/v1/cost/summary")
+async def cost_summary(request: Request):
+    return await forward_request("cost", "/cost/summary", request)
+
+
+@router.get("/v1/cost/trend")
+async def cost_trend(request: Request):
+    return await forward_request("cost", "/cost/trend", request)
+
+
+@router.get("/v1/cost/services")
+async def cost_services(request: Request):
+    return await forward_request("cost", "/cost/services", request)
+
+
+@router.get("/v1/cost/regions")
+async def cost_regions(request: Request):
+    return await forward_request("cost", "/cost/regions", request)
+
+
+@router.get("/v1/cost/accounts")
+async def cost_accounts(request: Request):
+    return await forward_request("cost", "/cost/accounts", request)
+
+
+@router.get("/v1/cost/forecast")
+async def cost_forecast(request: Request):
+    return await forward_request("cost", "/cost/forecast", request)
+
+
+@router.get("/v1/cost/anomalies")
+async def cost_anomalies(request: Request):
+    return await forward_request("cost", "/cost/anomalies", request)
+
+
+@router.post("/v1/cost/collect")
+async def cost_collect(request: Request):
+    return await forward_request("cost", "/cost/collect", request)
+
