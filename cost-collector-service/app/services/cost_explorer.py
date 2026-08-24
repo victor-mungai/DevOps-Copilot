@@ -11,11 +11,12 @@ logger = logging.getLogger("cost-collector")
 def fetch_cost_explorer_billing(
     tenant_id: str,
     days: int = 90,
-    aws_account_id: str = "241524041973",
+    aws_account_id: str | None = None,
     region: str = "us-east-2",
 ) -> list[dict]:
     """Fetch daily cost records from AWS Cost Explorer API or generate realistic
     historical billing records for connected tenant resources."""
+    acc_id = aws_account_id or f"aws-acc-{tenant_id[:8]}"
     records: list[dict] = []
     end_date = datetime.utcnow().date()
     start_date = end_date - timedelta(days=days)
@@ -46,7 +47,7 @@ def fetch_cost_explorer_billing(
                         records.append(
                             normalize_cost_entry(
                                 tenant_id=tenant_id,
-                                aws_account_id=aws_account_id,
+                                aws_account_id=acc_id,
                                 billing_date=b_date,
                                 raw_service=service,
                                 region=reg,
@@ -82,7 +83,7 @@ def fetch_cost_explorer_billing(
             records.append(
                 normalize_cost_entry(
                     tenant_id=tenant_id,
-                    aws_account_id=aws_account_id,
+                    aws_account_id=acc_id,
                     billing_date=day_str,
                     raw_service=s_name,
                     region=reg,

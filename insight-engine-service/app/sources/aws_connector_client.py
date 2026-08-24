@@ -63,15 +63,9 @@ def list_ec2_instances(tenant_id: str, region: str | None = None) -> list[dict]:
                         "region": (instance.get("Placement") or {}).get("AvailabilityZone"),
                     }
                 )
-        if instances:
-            return instances
+        return instances
     except Exception:
-        pass
-    return [
-        {"instance_id": "i-0b26c9340c04eb22a", "instance_type": "t3.medium", "tags": {"Name": "Jenkins Production"}, "state": "running", "region": "us-east-2a"},
-        {"instance_id": "i-060a947e1e823ea71", "instance_type": "t3.small", "tags": {"Name": "Staging Web App"}, "state": "running", "region": "us-east-2b"},
-        {"instance_id": "i-0ad3c6e402779dc42", "instance_type": "t3.large", "tags": {"Name": "Payment Gateway API"}, "state": "running", "region": "us-east-2a"},
-    ]
+        return []
 
 
 def get_rds_databases(tenant_id: str, region: str | None = None) -> dict[str, Any]:

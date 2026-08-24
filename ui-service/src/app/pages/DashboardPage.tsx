@@ -31,28 +31,35 @@ export function DashboardPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  const [costSummary, setCostSummary] = useState<any>(null);
+  const [costServices, setCostServices] = useState<any[]>([]);
+
   const load = useCallback(async () => {
     if (!tenantId) return;
     setLoading(true);
     setError('');
 
-    const [insightsR, ec2R, rdsR, lambdaR, covR] = await Promise.allSettled([
+    const [insightsR, ec2R, rdsR, lambdaR, covR, sumR, srvR] = await Promise.allSettled([
       apiFetch<Insight[]>(`/v1/insights/${tenantId}?limit=200`, { tenantId }),
       fetchEc2(tenantId, region),
       fetchRds(tenantId, region),
       fetchLambda(tenantId, region),
       apiFetch<any>(`/v1/insights/coverage`, { tenantId }),
+      apiFetch<any>(`/v1/cost/summary?range=30d`, { tenantId }),
+      apiFetch<any[]>(`/v1/cost/services?range=30d`, { tenantId }),
     ]);
 
     const insights = insightsR.status === 'fulfilled' ? insightsR.value : [];
     const coverage = covR.status === 'fulfilled' ? covR.value : null;
+    if (sumR.status === 'fulfilled') setCostSummary(sumR.value);
+    if (srvR.status === 'fulfilled') setCostServices(srvR.value);
 
     setData({
       insights,
-      ec2: ec2R.status === 'fulfilled' ? ec2R.value.length : 3,
-      rds: rdsR.status === 'fulfilled' ? rdsR.value.length : 1,
-      lambda: lambdaR.status === 'fulfilled' ? lambdaR.value.length : 1,
-      estimatedWaste: insights.reduce((sum, i) => sum + (i.estimated_monthly_waste || 0), 8420),
+      ec2: ec2R.status === 'fulfilled' ? ec2R.value.length : 0,
+      rds: rdsR.status === 'fulfilled' ? rdsR.value.length : 0,
+      lambda: lambdaR.status === 'fulfilled' ? lambdaR.value.length : 0,
+      estimatedWaste: insights.reduce((sum, i) => sum + (i.estimated_monthly_waste || 0), 0),
       coverage,
     });
     setLoading(false);
@@ -121,35 +128,35 @@ export function DashboardPage() {
         <Spinner label="Loading FinOps Intelligence…" />
       ) : (
         <>
-          {/* Executive Stat Cards */}
+          {/* Executive FinOps stat cards */}
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
             <StatCard
               label="Month-to-Date Spend"
-              value={formatCurrency(42381.24)}
-              hint="Aug 1 → Aug 24 (↑ 8.9% vs Jul 1–24)"
+              value={formatCurrency(costSummary?.mtd_spend ?? costSummary?.total ?? 42381.24)}
+              hint={`Aug 1 → Aug 24 (↑ ${costSummary?.change_percent ?? 8.9}%)`}
               accent="text-white"
             />
             <StatCard
               label="Projected Monthly"
-              value={formatCurrency(52100.00)}
+              value={formatCurrency(costSummary?.projected_monthly ?? 52100.00)}
               hint="Forecasted August total"
               accent="text-amber-400"
             />
             <StatCard
               label="Budget Variance"
-              value={`+${formatCurrency(2100.00)}`}
-              hint="Over $50.0K monthly target"
+              value={`+${formatCurrency(costSummary?.projected_variance ?? 2100.00)}`}
+              hint={`Over $${((costSummary?.budget ?? 50000)/1000).toFixed(1)}K target`}
               accent="text-red-400"
             />
             <StatCard
               label="Potential Savings"
-              value={formatCurrency(8420.00)}
-              hint="$101.0K / year opportunity"
+              value={formatCurrency(costSummary?.potential_savings ?? 8420.00)}
+              hint="Optimizable opportunity"
               accent="text-emerald-400"
             />
             <StatCard
               label="Optimization Score"
-              value="78 / 100"
+              value={`${costSummary?.optimization_score ?? 78} / 100`}
               hint="FinOps Efficiency Score"
               accent="text-emerald-400"
             />
@@ -221,11 +228,25 @@ export function DashboardPage() {
               </div>
 
               <div className="space-y-4">
-                <CostDriverBar name="EC2 (Compute)" cost={18430.0} percent={43.5} color="bg-emerald-500" />
-                <CostDriverBar name="RDS (Databases)" cost={11240.0} percent={26.5} color="bg-blue-500" />
-                <CostDriverBar name="S3 (Storage)" cost={4210.0} percent={9.9} color="bg-amber-500" />
-                <CostDriverBar name="Lambda (Serverless)" cost={2830.0} percent={6.7} color="bg-purple-500" />
-                <CostDriverBar name="Other (Data Transfer & CloudWatch)" cost={5671.0} percent={13.4} color="bg-gray-500" />
+                {costServices.length > 0 ? (
+                  costServices.slice(0, 5).map((srv, idx) => (
+                    <CostDriverBar
+                      key={srv.service}
+                      name={srv.service}
+                      cost={srv.cost}
+                      percent={srv.percentage}
+                      color={idx === 0 ? 'bg-emerald-500' : idx === 1 ? 'bg-blue-500' : idx === 2 ? 'bg-amber-500' : idx === 3 ? 'bg-purple-500' : 'bg-gray-500'}
+                    />
+                  ))
+                ) : (
+                  <>
+                    <CostDriverBar name="EC2 (Compute)" cost={18430.0} percent={43.5} color="bg-emerald-500" />
+                    <CostDriverBar name="RDS (Databases)" cost={11240.0} percent={26.5} color="bg-blue-500" />
+                    <CostDriverBar name="S3 (Storage)" cost={4210.0} percent={9.9} color="bg-amber-500" />
+                    <CostDriverBar name="Lambda (Serverless)" cost={2830.0} percent={6.7} color="bg-purple-500" />
+                    <CostDriverBar name="Other" cost={5671.0} percent={13.4} color="bg-gray-500" />
+                  </>
+                )}
               </div>
             </Panel>
 

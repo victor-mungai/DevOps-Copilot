@@ -270,12 +270,25 @@ def get_cost_by_region(db: Session, tenant_id: str, range_days: int = 30) -> lis
 
 def get_cost_by_account(db: Session, tenant_id: str, range_days: int = 30) -> list[dict[str, Any]]:
     _ensure_data(db, tenant_id)
-    # Multi-account breakdown for enterprise customers
+    start_curr = datetime.utcnow().date() - timedelta(days=range_days)
+
+    rows = (
+        db.query(CostRecord.aws_account_id, func.sum(CostRecord.unblended_cost).label("total"))
+        .filter(CostRecord.tenant_id == tenant_id, CostRecord.billing_date >= start_curr)
+        .group_by(CostRecord.aws_account_id)
+        .order_by(func.sum(CostRecord.unblended_cost).desc())
+        .all()
+    )
+
+    total_sum = sum(float(r[1]) for r in rows) or 1.0
     return [
-        {"account_name": "Production", "aws_account_id": "241524041973", "cost": 31420.0, "percentage": 74.1},
-        {"account_name": "Staging", "aws_account_id": "999999999999", "cost": 7820.0, "percentage": 18.5},
-        {"account_name": "Development", "aws_account_id": "888888888888", "cost": 3240.0, "percentage": 7.6},
-        {"account_name": "Shared Services", "aws_account_id": "777777777777", "cost": 4901.0, "percentage": 11.5},
+        {
+            "account_name": f"AWS Account ({r[0]})" if r[0] else "Default AWS Account",
+            "aws_account_id": r[0] or "connected-account",
+            "cost": round(float(r[1]), 2),
+            "percentage": round((float(r[1]) / total_sum) * 100.0, 1),
+        }
+        for r in rows
     ]
 
 

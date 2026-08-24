@@ -48,26 +48,17 @@ export function OptimizationPage() {
     void loadData();
   }, [loadData]);
 
-  // Display name mapping for connected resources
-  const getDisplayName = (rid: string, rtype: string) => {
-    if (rid === 'i-0b26c9340c04eb22a') return 'Jenkins Production';
-    if (rid === 'i-060a947e1e823ea71') return 'Staging Web App';
-    if (rid === 'i-0ad3c6e402779dc42') return 'Payment Gateway API';
-    if (rid === 'db-prod-pg') return 'Production PostgreSQL DB';
-    if (rid === 'process-telemetry') return 'Telemetry Processor Lambda';
-    return `${rtype.toUpperCase()} Resource (${rid.slice(-6)})`;
-  };
-
   // Transform insights into quantified financial opportunities sorted strictly by dollar impact
   const opportunities: OpportunityCard[] = insights
     .map((ins, idx) => {
-      const monthlyWaste = ins.estimated_monthly_waste || (idx === 0 ? 3420.0 : idx === 1 ? 2180.0 : idx === 2 ? 1120.0 : 840.0);
+      const monthlyWaste = ins.estimated_monthly_waste || 340.0;
       const currCost = monthlyWaste + 230.0;
       const optCost = 230.0;
       const rtype = ins.resource_type || 'EC2';
+      const dName = (ins as any).display_name || ins.tags?.Name || ins.tags?.name || `${rtype.toUpperCase()} (${ins.resource_id})`;
       return {
         id: ins.id,
-        display_name: getDisplayName(ins.resource_id, rtype),
+        display_name: dName,
         resource_id: ins.resource_id,
         resource_type: rtype.toUpperCase(),
         issue: ins.issue,
