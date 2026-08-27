@@ -15,6 +15,7 @@ downloads/
 eggs/
 .eggs/
 lib/
+!ui-service/src/app/lib/
 lib64/
 parts/
 sdist/
@@ -220,11 +221,6 @@ node_modules/
 
 # Logs
 *.log
-
-# SQLite DBs
-*.db
-*.sqlite
-*.sqlite3
 
 # IDE
 .vscode/
