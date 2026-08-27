@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+.git
+.gitignore
+__pycache__/
+*.py[cod]
+*.db
+*.sqlite*
+logs/
+node_modules/
+dist/
+build/
+.venv/

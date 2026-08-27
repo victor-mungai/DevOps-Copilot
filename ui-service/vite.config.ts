@@ -19,6 +19,12 @@ export default defineConfig({
   server: {
     host: '127.0.0.1',
     port: 8002,
+    strictPort: true,
+    // Keep the browser HMR socket on the same local address as the dev server.
+    hmr: {
+      host: '127.0.0.1',
+      port: 8002,
+    },
   },
 
   // File types to support raw imports. Never add .css, .tsx, or .ts files to this.

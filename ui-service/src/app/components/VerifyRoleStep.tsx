@@ -102,7 +102,7 @@ export function VerifyRoleStep({
           id="role-arn"
           value={roleArn}
           onChange={(e) => setRoleArn(e.target.value)}
-          placeholder="arn:aws:iam::123456789012:role/DevOpsCopilotRole"
+          placeholder="arn:aws:iam::<account-id>:role/<role-name>"
           className="bg-[#0B0F17] border-gray-700 text-white"
           disabled={verifying || !isActive}
         />

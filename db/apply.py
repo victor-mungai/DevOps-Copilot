@@ -9,8 +9,21 @@ The URL is read from the environment so no secret is ever stored in the repo.
 
 import os
 import sys
+from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 import psycopg2
+
+
+def _psycopg2_url(url: str) -> str:
+    if url.startswith("postgresql+psycopg2://"):
+        url = "postgresql://" + url[len("postgresql+psycopg2://") :]
+    elif url.startswith("postgres+psycopg2://"):
+        url = "postgresql://" + url[len("postgres+psycopg2://") :]
+
+    parts = urlsplit(url)
+    query = parse_qs(parts.query, keep_blank_values=True)
+    query["sslmode"] = ["require"]
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query, doseq=True), parts.fragment))
 
 
 def main() -> None:
@@ -24,7 +37,7 @@ def main() -> None:
     with open(path, "r", encoding="utf-8") as fh:
         sql = fh.read()
 
-    conn = psycopg2.connect(url)
+    conn = psycopg2.connect(_psycopg2_url(url))
     conn.autocommit = True
     try:
         with conn.cursor() as cur:

@@ -8,7 +8,6 @@ import os
 from typing import Optional
 
 from .. import config
-from .cost_table import estimate_monthly_cost
 
 # A 7-day window at the default 60s scrape would be ~10k samples. Require a
 # modest fraction so a freshly-connected account doesn't produce false positives.
@@ -30,8 +29,6 @@ def evaluate(
     if avg_cpu >= config.IDLE_CPU_THRESHOLD:
         return None
 
-    estimated_waste = estimate_monthly_cost(instance_type)
-
     # Confidence: high when clearly idle with solid data; medium when borderline.
     clearly_idle = avg_cpu < (config.IDLE_CPU_THRESHOLD / 2)
     confidence = "high" if clearly_idle else "medium"
@@ -45,7 +42,7 @@ def evaluate(
         "issue": "Underutilized EC2 Instance",
         "recommendation": "Consider downsizing or terminating this instance.",
         "confidence": confidence,
-        "estimated_monthly_waste": estimated_waste,
+        "estimated_monthly_waste": 0.0,
         "avg_cpu": round(avg_cpu, 2),
         "instance_type": instance_type,
         "window_days": float(config.IDLE_WINDOW_DAYS),

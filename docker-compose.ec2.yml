@@ -1,0 +1,81 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?set RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD}
+    expose: ["5672"]
+
+  onboarding:
+    build: ./onboarding-service
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:?set CORS_ALLOW_ORIGINS}
+    expose: ["8001"]
+
+  aws-connector:
+    build: ./aws-connector-service
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      ONBOARDING_SERVICE_URL: http://onboarding:8001
+    expose: ["8003"]
+    depends_on: [onboarding]
+
+  metrics:
+    build: ./metrics-collector-service
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      AWS_CONNECTOR_SERVICE_URL: http://aws-connector:8003
+      ONBOARDING_SERVICE_URL: http://onboarding:8001
+      PROMETHEUS_PUSHGATEWAY_URL: ${PROMETHEUS_PUSHGATEWAY_URL:?set PROMETHEUS_PUSHGATEWAY_URL}
+    expose: ["8007"]
+    depends_on: [aws-connector, onboarding]
+
+  insight:
+    build: ./insight-engine-service
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      AWS_CONNECTOR_SERVICE_URL: http://aws-connector:8003
+      COST_SERVICE_URL: http://cost:8006
+      PROMETHEUS_URL: ${PROMETHEUS_URL:?set PROMETHEUS_URL}
+      PINECONE_API_KEY: ${PINECONE_API_KEY:-}
+      PINECONE_INDEX: ${PINECONE_INDEX:-}
+      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
+    expose: ["8005"]
+    depends_on: [aws-connector, cost]
+
+  cost:
+    build: ./cost-collector-service
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      AWS_CONNECTOR_SERVICE_URL: http://aws-connector:8003
+      ONBOARDING_SERVICE_URL: http://onboarding:8001
+      INSIGHT_ENGINE_BASE_URL: http://insight:8005
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:?set RABBITMQ_USER}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD}
+    expose: ["8006"]
+    depends_on: [rabbitmq, aws-connector, onboarding]
+
+  gateway:
+    build: ./gateway-service
+    restart: unless-stopped
+    ports: ["8000:8000"]
+    environment:
+      AUTH_DISABLED: ${AUTH_DISABLED:-false}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:?set CORS_ALLOW_ORIGINS}
+      ONBOARDING_SERVICE_URL: http://onboarding:8001
+      AWS_CONNECTOR_SERVICE_URL: http://aws-connector:8003
+      METRICS_SERVICE_URL: http://metrics:8007
+      INSIGHT_SERVICE_URL: http://insight:8005
+      COST_SERVICE_URL: http://cost:8006
+      PROMETHEUS_URL: ${PROMETHEUS_URL:?set PROMETHEUS_URL}
+    depends_on: [onboarding, aws-connector, metrics, insight, cost]

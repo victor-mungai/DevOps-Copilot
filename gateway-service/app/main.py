@@ -5,14 +5,14 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
+BASE_DIR = os.path.dirname(os.path.dirname(__file__))
+load_dotenv(os.path.join(BASE_DIR, ".env"))
+
 from .config.service_registry import get_service_url
 from .middleware.auth_middleware import auth_middleware
 from .middleware.rate_limit_middleware import rate_limit_middleware
 from .routes import router
 from .services.routing_service import proxy_request_to
-
-BASE_DIR = os.path.dirname(os.path.dirname(__file__))
-load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("gateway-service")
