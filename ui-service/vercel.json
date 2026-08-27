@@ -1,5 +1,9 @@
 {
-  "buildCommand": "npm run build",
-  "outputDirectory": "dist",
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+  "redirects": [
+    {
+      "source": "/*",
+      "destination": "http://3.136.181.88:8000/",
+      "permanent": false
+    }
+  ]
 }
