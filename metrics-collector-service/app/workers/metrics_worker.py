@@ -18,15 +18,15 @@ logger = logging.getLogger("metrics-worker")
 
 def process_collection_job(event: Dict[str, Any]):
     tenant_id = event.get("tenant_id")
-    region = event.get("region", "us-east-2")
+    region = event.get("region")
     payload = event.get("payload", {})
     resource_id = payload.get("resource_id") or event.get("resource_id")
     resource_type = payload.get("resource_type") or event.get("resource_type") or "ec2"
 
     logger.info("Processing metrics collection job for tenant %s, resource %s (%s)", tenant_id, resource_id, resource_type)
 
-    if not tenant_id or not resource_id:
-        logger.warning("Invalid collection job payload: missing tenant_id or resource_id")
+    if not tenant_id or not resource_id or not region:
+        logger.warning("Invalid collection job payload: missing tenant_id, resource_id, or region")
         return
 
     # Obtain AWS credentials
@@ -38,7 +38,10 @@ def process_collection_job(event: Dict[str, Any]):
     access_key = creds["access_key_id"]
     secret_key = creds["secret_access_key"]
     session_token = creds.get("session_token")
-    aws_account_id = creds.get("aws_account_id", "123456789012")
+    aws_account_id = creds.get("aws_account_id")
+    if not aws_account_id:
+        logger.error("AWS account id missing from credentials for tenant %s", tenant_id)
+        return
 
     samples = []
     if resource_type == "ec2":

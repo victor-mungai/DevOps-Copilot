@@ -39,7 +39,7 @@ def build_ai_context(
     insights = all_insights
     if resource_id:
         scoped = [i for i in all_insights if i["resource_id"] == resource_id]
-        insights = scoped or all_insights  # fall back so we can still answer
+        insights = scoped
 
     primary = None
     if insight_id:
@@ -105,13 +105,14 @@ def build_ai_context(
 
     if not cost_context:
         cost_context = {
+            "status": "No data available",
             "total": 0.0,
             "previous_period": 0.0,
             "change_percent": 0.0,
             "currency": "USD",
             "projected_monthly": 0.0,
             "potential_savings": 0.0,
-            "optimization_score": 100,
+            "optimization_score": None,
         }
 
     tot_savings = sum(float(i.get("estimated_monthly_waste", 0.0) or 0.0) for i in current_insights)

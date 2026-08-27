@@ -1,378 +1,379 @@
-import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router';
-import { DollarSign, TrendingUp, Sparkles, AlertTriangle, ShieldCheck, RefreshCw, BarChart2, CheckCircle2, Info } from 'lucide-react';
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { RefreshCw, ChevronRight, Layers, DollarSign } from 'lucide-react';
+import { Brush, CartesianGrid, Line, LineChart as RLineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { apiFetch } from '../lib/api';
 import { formatCurrency } from '../lib/format';
-import { useTenant } from '../lib/tenant';
-import { Panel, Spinner } from '../components/dashboard/primitives';
-
-interface CostSummary {
-  total: number;
-  total_cost: number;
-  previous_period: number;
-  change_percent: number;
-  projected_monthly: number;
-  budget: number;
-  projected_variance: number;
-  potential_savings: number;
-  optimization_score: number;
-  currency: string;
-  cost_basis: string;
-  mtd_spend: number;
-  previous_equivalent_period_spend: number;
-  previous_full_month_spend: number;
-  attribution_status: string;
-}
-
-interface ReconciliationStatus {
-  aws_cost_explorer: number;
-  database_total: number;
-  api_total: number;
-  variance: number;
-  variance_percent: number;
-  status: string;
-}
-
-interface TrendPoint {
-  date: string;
-  cost: number;
-  previous_cost: number;
-  forecast: number;
-}
-
-interface ServiceBreakdown {
-  service: string;
-  cost: number;
-  percentage: number;
-}
-
-interface RegionBreakdown {
-  region: string;
-  cost: number;
-  percentage: number;
-}
-
-interface AccountBreakdown {
-  account_name: string;
-  aws_account_id: string;
-  cost: number;
-  percentage: number;
-}
-
-interface CostAnomaly {
-  id: string;
-  service: string;
-  region: string;
-  title: string;
-  description: string;
-  impact_cost: number;
-  severity: string;
-  detected_at: string;
-}
+import { periodQuery, useTenant } from '../lib/tenant';
+import { fetchForScope, mergeBreakdown, mergeSummaries, mergeTrends, scopedTenantIds } from '../lib/costScope';
 
 export function CostIntelligencePage() {
-  const navigate = useNavigate();
-  const { tenantId, accountId } = useTenant();
-  const [range, setRange] = useState<'30d' | '60d' | '90d'>('30d');
-  const [summary, setSummary] = useState<CostSummary | null>(null);
-  const [reconcile, setReconcile] = useState<ReconciliationStatus | null>(null);
-  const [trend, setTrend] = useState<TrendPoint[]>([]);
-  const [services, setServices] = useState<ServiceBreakdown[]>([]);
-  const [regions, setRegions] = useState<RegionBreakdown[]>([]);
-  const [accounts, setAccounts] = useState<AccountBreakdown[]>([]);
-  const [anomalies, setAnomalies] = useState<CostAnomaly[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { tenantId, region, isConnected, timePeriod, customRange, isAllAccounts, scopeLabel, workspaces } = useTenant();
+  const [loading, setLoading] = useState(false);
 
-  const loadData = useCallback(async () => {
+  const [summary, setSummary] = useState<any>(null);
+  const [accountsCost, setAccountsCost] = useState<any[]>([]);
+  const [topServices, setTopServices] = useState<any[]>([]);
+  const [trend, setTrend] = useState<any[]>([]);
+  const [opportunities, setOpportunities] = useState<any[]>([]);
+  const [drilldown, setDrilldown] = useState<any>(null);
+
+  const [selectedService, setSelectedService] = useState<string | null>(null);
+  const [selectedRegion, setSelectedRegion] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
     if (!tenantId) return;
     setLoading(true);
     try {
-      const [sumRes, recRes, trendRes, srvRes, regRes, accRes, anoRes] = await Promise.allSettled([
-        apiFetch<CostSummary>(`/v1/cost/summary?range=${range}`, { tenantId }),
-        apiFetch<ReconciliationStatus>(`/v1/cost/reconciliation`, { tenantId }),
-        apiFetch<TrendPoint[]>(`/v1/cost/trend?range=${range}`, { tenantId }),
-        apiFetch<ServiceBreakdown[]>(`/v1/cost/services?range=${range}`, { tenantId }),
-        apiFetch<RegionBreakdown[]>(`/v1/cost/regions?range=${range}`, { tenantId }),
-        apiFetch<AccountBreakdown[]>(`/v1/cost/accounts?range=${range}`, { tenantId }),
-        apiFetch<CostAnomaly[]>(`/v1/cost/anomalies?range=${range}`, { tenantId }),
+      const regParamAmp = region ? `&region=${encodeURIComponent(region)}` : '';
+      const rangeParam = periodQuery(timePeriod, customRange);
+      const tenantIds = scopedTenantIds(tenantId, isAllAccounts, workspaces);
+      const scoped = <T,>(path: string) => isAllAccounts ? fetchForScope<T>(tenantIds, path, [] as T[]) : apiFetch<T>(path, { tenantId });
+
+      let drillUrl = `/v1/cost/drilldown?${rangeParam}${regParamAmp}`;
+      if (selectedService) drillUrl += `&service=${encodeURIComponent(selectedService)}`;
+      if (selectedRegion) drillUrl += `&region=${encodeURIComponent(selectedRegion)}`;
+      const [sumRes, accRes, srvRes, trdRes, oppRes, drlRes] = await Promise.allSettled([
+        scoped<any>(`/v1/cost/summary?${rangeParam}&basis=NET_UNBLENDED${regParamAmp}`),
+        scoped<any>(`/v1/cost/accounts?${rangeParam}${regParamAmp}`),
+        scoped<any>(`/v1/cost/services?${rangeParam}${regParamAmp}`),
+        scoped<any>(`/v1/cost/trend?${rangeParam}${regParamAmp}`),
+        scoped<any>(`/v1/cost/opportunities`),
+        scoped<any>(drillUrl),
       ]);
 
-      if (sumRes.status === 'fulfilled') setSummary(sumRes.value);
-      if (recRes.status === 'fulfilled') setReconcile(recRes.value);
-      if (trendRes.status === 'fulfilled') setTrend(trendRes.value);
-      if (srvRes.status === 'fulfilled') setServices(srvRes.value);
-      if (regRes.status === 'fulfilled') setRegions(regRes.value);
-      if (accRes.status === 'fulfilled') setAccounts(accRes.value);
-      if (anoRes.status === 'fulfilled') setAnomalies(anoRes.value);
+      if (sumRes.status === 'fulfilled') setSummary(isAllAccounts ? mergeSummaries(sumRes.value as any[]) : sumRes.value);
+      if (accRes.status === 'fulfilled') setAccountsCost(isAllAccounts ? mergeBreakdown(accRes.value as any[]) : (Array.isArray(accRes.value) ? accRes.value : (accRes.value ? [accRes.value] : [])));
+      if (srvRes.status === 'fulfilled') {
+        const val = srvRes.value;
+        const list = isAllAccounts ? mergeBreakdown(val as any[], 'services') : (Array.isArray(val) ? val : (val?.services || []));
+        setTopServices(list);
+      }
+      if (trdRes.status === 'fulfilled') setTrend(isAllAccounts ? mergeTrends(trdRes.value as any[]) : (Array.isArray(trdRes.value) ? trdRes.value : []));
+      if (oppRes.status === 'fulfilled') setOpportunities(isAllAccounts ? (oppRes.value as any[]).flatMap((value) => value?.opportunities || []) : (Array.isArray(oppRes.value) ? oppRes.value : (oppRes.value?.opportunities || [])));
+      if (drlRes.status === 'fulfilled') {
+        if (isAllAccounts) {
+          const payloads = drlRes.value as any[];
+          setDrilldown({ ...(payloads[0] || {}), items: mergeBreakdown(payloads, 'items') });
+        } else {
+          setDrilldown(drlRes.value);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load cost intelligence:', err);
     } finally {
       setLoading(false);
     }
-  }, [tenantId, range]);
+  }, [tenantId, region, timePeriod, customRange, isAllAccounts, workspaces, selectedService, selectedRegion]);
 
   useEffect(() => {
-    void loadData();
-  }, [loadData]);
+    void load();
+  }, [load]);
+
+  if (!isConnected) {
+    return (
+      <div className="py-16 text-center text-gray-400 font-sans">
+        Connect an AWS account to view cost intelligence.
+      </div>
+    );
+  }
+
+  const gross = summary?.gross ?? 0;
+  const credits = summary?.adjustments ?? summary?.total_credits_and_discounts ?? summary?.credits ?? 0;
+  const net = summary?.net ?? summary?.total_cost ?? 0;
+  const prevPeriodNet = summary?.previous_period ?? summary?.previous_period_net ?? 0;
+  const changePct = summary?.change_percent ?? 0;
+
+  const totalSavings = opportunities.reduce((acc, o) => acc + (o.estimated_monthly_waste || o.potential_saving_monthly || 0), 0);
+  const trendData = useMemo(() => trend.map((point) => ({
+    ...point,
+    ts: Date.parse(`${point.date}T00:00:00Z`),
+  })).filter((point) => Number.isFinite(point.ts)), [trend]);
 
   return (
-    <div className="space-y-8">
-      {/* Header & Controls */}
+    <div className="space-y-8 font-sans">
+      {/* Header Controls */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-semibold text-white flex items-center gap-2">
-              <DollarSign className="w-6 h-6 text-emerald-400" />
-              AWS Cost Intelligence & Reconciliation
-            </h1>
-            <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-              AMORTIZED · USD
-            </span>
-            <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
-              reconcile?.status === 'RECONCILED'
-                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-            }`}>
-              {reconcile?.status || 'RECONCILED'} ({reconcile?.variance_percent ?? 0}% VARIANCE)
-            </span>
-          </div>
-          <p className="text-gray-400 text-sm mt-1">
-            AWS Cost Explorer verified telemetry {accountId ? `· Account ${accountId}` : ''}
-          </p>
+          <h1 className="text-xl font-semibold text-white">Cost Intelligence</h1>
+          <p className="text-sm text-gray-400 mt-0.5">{scopeLabel}</p>
         </div>
 
         <div className="flex items-center gap-3">
-          <div className="bg-gray-900 border border-gray-800 rounded-lg p-1 flex items-center gap-1">
-            {(['30d', '60d', '90d'] as const).map((r) => (
-              <button
-                key={r}
-                onClick={() => setRange(r)}
-                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                  range === r ? 'bg-emerald-600 text-white' : 'text-gray-400 hover:text-white'
-                }`}
-              >
-                {r.toUpperCase()}
-              </button>
-            ))}
-          </div>
-
           <button
-            onClick={() => void loadData()}
+            onClick={() => void load()}
             disabled={loading}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-800 bg-gray-900 text-gray-300 hover:text-white text-sm"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-800 bg-[#111827] text-gray-300 hover:text-white text-xs"
           >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </button>
         </div>
       </div>
 
-      {loading ? (
-        <Spinner label="Reconciling AWS Billing Data..." />
-      ) : (
-        <div className="space-y-6">
-          {/* Partial-Month Cost Comparison Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Panel className="p-5 border-emerald-600/30 bg-gradient-to-br from-[#111827] to-[#0d1a29]">
-              <p className="text-gray-400 text-xs font-medium uppercase tracking-wider">Month-to-Date Spend</p>
-              <h2 className="text-3xl font-bold text-white mt-2">
-                {formatCurrency(summary?.mtd_spend ?? summary?.total ?? 0.0)}
-              </h2>
-              <div className="flex items-center gap-1.5 mt-2 text-xs text-emerald-400 font-medium">
-                <TrendingUp className="w-3.5 h-3.5" />
-                <span>Aug 1 → Aug 24 (↑ {summary?.change_percent ?? 0}%)</span>
-              </div>
-            </Panel>
+      {/* Financial totals returned by AWS Cost Explorer. */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="rounded-xl bg-[#111827] border border-gray-800 p-5">
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Gross Spend</p>
+          <p className="text-2xl font-bold text-white mt-2">{formatCurrency(gross)}</p>
+          <p className="text-xs text-gray-500 mt-1">Usage before credits and refunds</p>
+        </div>
 
-            <Panel className="p-5">
-              <p className="text-gray-400 text-xs font-medium uppercase tracking-wider">Previous Equivalent Period</p>
-              <h2 className="text-3xl font-bold text-white mt-2">
-                {formatCurrency(summary?.previous_equivalent_period_spend ?? 0.0)}
-              </h2>
-              <p className="text-xs text-gray-500 mt-2">Jul 1 → Jul 24 (fair MTD comparison)</p>
-            </Panel>
+        <div className="rounded-xl bg-[#111827] border border-gray-800 p-5">
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Credits and Refunds</p>
+          <p className="text-2xl font-bold text-emerald-400 mt-2">{credits === 0 ? formatCurrency(0) : `-${formatCurrency(Math.abs(credits))}`}</p>
+          <p className="text-xs text-gray-500 mt-1">Signed AWS credits, refunds, and discounts</p>
+        </div>
 
-            <Panel className="p-5">
-              <p className="text-gray-400 text-xs font-medium uppercase tracking-wider">Previous Full Month</p>
-              <h2 className="text-3xl font-bold text-white mt-2">
-                {formatCurrency(summary?.previous_full_month_spend ?? 0.0)}
-              </h2>
-              <p className="text-xs text-gray-500 mt-2">July 1–31 full billing cycle</p>
-            </Panel>
+        <div className="rounded-xl bg-[#111827] border border-gray-800 p-5">
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Net Out-of-Pocket</p>
+          <p className="text-2xl font-bold text-white mt-2">{formatCurrency(net)}</p>
+          <span className={`text-xs font-medium block mt-1 ${changePct >= 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+            Previous: {formatCurrency(prevPeriodNet)} ({Math.abs(changePct)}% shift)
+          </span>
+        </div>
 
-            <Panel className="p-5 border-amber-500/30">
-              <p className="text-gray-400 text-xs font-medium uppercase tracking-wider">Projected Monthly Spend</p>
-              <h2 className="text-3xl font-bold text-amber-400 mt-2">
-                {formatCurrency(summary?.projected_monthly ?? 0.0)}
-              </h2>
-              <p className="text-xs text-red-400 mt-2 font-semibold">
-                +${formatCurrency(summary?.projected_variance ?? 0.0)} over ${((summary?.budget ?? 50000)/1000).toFixed(0)}K budget
-              </p>
-            </Panel>
+        <div className="rounded-xl bg-[#111827] border border-gray-800 p-5">
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Potential Savings</p>
+          <p className="text-2xl font-bold text-emerald-400 mt-2">{formatCurrency(totalSavings)}/mo</p>
+          <p className="text-xs text-emerald-500/80 mt-1">{opportunities.length} metric-backed opportunities</p>
+        </div>
+      </div>
+
+      {/* Spend Trend Graph */}
+      <div className="rounded-xl bg-[#111827] border border-gray-800 p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-semibold tracking-wider text-gray-400 uppercase">SPEND TREND</h2>
+          <span className="text-xs text-gray-500 font-mono">{scopeLabel}</span>
+        </div>
+
+        {trend.length === 0 ? (
+          <div className="h-32 flex items-center justify-center text-xs text-gray-500">
+            No daily trend points recorded for this scope.
           </div>
-
-          {/* Attribution Level Banner */}
-          <Panel className="p-4 border-gray-800 bg-gray-900/60 flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <Info className="w-5 h-5 text-sky-400 shrink-0" />
-              <div>
-                <h4 className="text-sm font-semibold text-white">Cost Attribution Levels: Level 1 (Account) · Level 2 (Region) · Level 3 (Service)</h4>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  Level 4 (Resource-level) cost attribution is unsupported by AWS Cost Explorer without AWS Cost & Usage Reports (CUR). Unattributed resource estimates are suppressed to prevent false precision.
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              <span className="text-xs text-emerald-400 font-semibold font-mono">RECONCILED</span>
-            </div>
-          </Panel>
-
-          {/* Spend Trend Graph */}
-          <Panel className="p-6">
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h2 className="text-lg font-semibold text-white">Daily AWS Spend Trend ({range})</h2>
-                <p className="text-xs text-gray-400 mt-0.5">Actual MTD daily trajectory vs previous period</p>
-              </div>
-              <div className="flex items-center gap-2 text-xs text-gray-400">
-                <span className="flex items-center gap-1">
-                  <span className="w-3 h-3 rounded-full bg-emerald-500" /> Current Period
-                </span>
-                <span className="flex items-center gap-1 ml-3">
-                  <span className="w-3 h-3 rounded-full bg-sky-500/50" /> Previous Period
-                </span>
-              </div>
-            </div>
-
-            <div className="h-72">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={trend}>
-                  <defs>
-                    <linearGradient id="costGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.4} />
-                      <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" vertical={false} />
-                  <XAxis dataKey="date" stroke="#6b7280" tick={{ fontSize: 11 }} />
-                  <YAxis stroke="#6b7280" tick={{ fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
-                  <Tooltip
-                    contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', borderRadius: '8px' }}
-                    formatter={(val: number) => [`$${val.toFixed(2)}`, 'Cost']}
-                  />
-                  <Area type="monotone" dataKey="cost" stroke="#10b981" strokeWidth={2.5} fill="url(#costGradient)" name="Spend ($)" />
-                  <Area type="monotone" dataKey="previous_cost" stroke="#38bdf8" strokeWidth={1.5} strokeDasharray="4 4" fill="none" name="Prev Period ($)" />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </Panel>
-
-          {/* Breakdown Grid */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <Panel className="p-5">
-              <h3 className="text-white font-medium mb-4 flex items-center gap-2">
-                <BarChart2 className="w-4 h-4 text-emerald-400" /> Level 3 — Cost by Service
-              </h3>
-              <div className="space-y-3">
-                {services.map((item) => (
-                  <div key={item.service}>
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="text-gray-300 font-medium">{item.service}</span>
-                      <span className="text-white">{formatCurrency(item.cost)} ({item.percentage}%)</span>
-                    </div>
-                    <div className="h-1.5 rounded-full bg-gray-800 overflow-hidden">
-                      <div className="h-full bg-emerald-500" style={{ width: `${item.percentage}%` }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Panel>
-
-            <Panel className="p-5">
-              <h3 className="text-white font-medium mb-4 flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-sky-400" /> Level 1 — Cost by Account
-              </h3>
-              <div className="space-y-3">
-                {accounts.map((acc) => (
-                  <div key={acc.aws_account_id}>
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="text-gray-300 font-medium">{acc.account_name}</span>
-                      <span className="text-white">{formatCurrency(acc.cost)} ({acc.percentage}%)</span>
-                    </div>
-                    <div className="h-1.5 rounded-full bg-gray-800 overflow-hidden">
-                      <div className="h-full bg-sky-500" style={{ width: `${acc.percentage}%` }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Panel>
-
-            <Panel className="p-5">
-              <h3 className="text-white font-medium mb-4 flex items-center gap-2">
-                <TrendingUp className="w-4 h-4 text-purple-400" /> Level 2 — Cost by Region
-              </h3>
-              <div className="space-y-3">
-                {regions.map((reg) => (
-                  <div key={reg.region}>
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="text-gray-300 font-medium">{reg.region}</span>
-                      <span className="text-white">{formatCurrency(reg.cost)} ({reg.percentage}%)</span>
-                    </div>
-                    <div className="h-1.5 rounded-full bg-gray-800 overflow-hidden">
-                      <div className="h-full bg-purple-500" style={{ width: `${reg.percentage}%` }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Panel>
+        ) : (
+          <div className="h-48 w-full pt-4">
+            <ResponsiveContainer width="100%" height="100%">
+              <RLineChart data={trendData} syncId="cost-trend" margin={{ top: 5, right: 12, left: -12, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                <XAxis type="number" dataKey="ts" domain={['dataMin', 'dataMax']} tick={{ fill: '#6b7280', fontSize: 11 }} tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} />
+                <YAxis tick={{ fill: '#6b7280', fontSize: 11 }} />
+                <Tooltip content={<CostTrendTooltip scope={scopeLabel} region={region} />} />
+                <Line type="monotone" dataKey="gross" name="Gross" stroke="#38bdf8" strokeWidth={2} dot={false} isAnimationActive={false} />
+                <Line type="monotone" dataKey="net" name="Net out-of-pocket" stroke="#10b981" strokeWidth={2} dot={false} isAnimationActive={false} />
+                <Line type="monotone" dataKey="forecast" name="Observed-period baseline" stroke="#f59e0b" strokeDasharray="4 4" dot={false} isAnimationActive={false} />
+                <Brush dataKey="ts" height={20} stroke="#374151" fill="#0B0F17" travellerWidth={8} tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} />
+              </RLineChart>
+            </ResponsiveContainer>
           </div>
+        )}
+      </div>
 
-          {/* Cost Anomaly Alert Cards */}
-          {anomalies.length > 0 && (
-            <Panel className="p-5 border-amber-500/30 bg-amber-500/5">
-              <div className="flex items-center gap-2 mb-3">
-                <AlertTriangle className="w-5 h-5 text-amber-400" />
-                <h3 className="text-white font-medium">Cost Anomaly Detected</h3>
-              </div>
-              {anomalies.map((ano) => (
-                <div key={ano.id} className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 py-2">
+      {/* Grid: Cost by Account & Cost by Service */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Cost by Account */}
+        <div className="rounded-xl bg-[#111827] border border-gray-800 p-6">
+          <h2 className="text-sm font-semibold tracking-wider text-gray-400 uppercase mb-4">COST BY ACCOUNT</h2>
+          {accountsCost.length === 0 ? (
+            <p className="text-xs text-gray-500 py-4 text-center">No multi-account breakdown available.</p>
+          ) : (
+            <div className="space-y-3">
+              {accountsCost.map((acc, idx) => (
+                <div key={idx} className="flex items-center justify-between py-2 border-b border-gray-800/60 last:border-0 text-sm">
                   <div>
-                    <p className="text-amber-200 text-sm font-medium">{ano.title}</p>
-                    <p className="text-gray-400 text-xs mt-0.5">{ano.description}</p>
+                    <span className="font-medium text-white block">{acc.account_name || acc.aws_account_id}</span>
+                    <span className="text-xs text-gray-500 font-mono">{acc.aws_account_id}</span>
                   </div>
-                  <button
-                    onClick={() => navigate('/optimization')}
-                    className="px-3 py-1.5 rounded-md bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 text-xs font-medium shrink-0"
-                  >
-                    Investigate & Optimize →
-                  </button>
+                  <div className="text-right">
+                    <span className="font-mono text-gray-200 block">{formatCurrency(acc.cost || 0)}</span>
+                    <span className="text-xs text-emerald-400 font-mono">{acc.gross_percentage ?? acc.percentage ?? 0}% of gross</span>
+                  </div>
                 </div>
               ))}
-            </Panel>
+            </div>
           )}
+        </div>
 
-          {/* AI Copilot Recommendation Banner */}
-          <Panel className="p-5 border-emerald-600/20 bg-gradient-to-r from-emerald-950/20 to-sky-950/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-emerald-600/20 border border-emerald-500/30 flex items-center justify-center shrink-0">
-                <Sparkles className="w-5 h-5 text-emerald-400" />
-              </div>
+        {/* Cost by Service Table */}
+        <div className="rounded-xl bg-[#111827] border border-gray-800 p-6 lg:col-span-2 font-sans">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-sm font-semibold tracking-wider text-gray-400 uppercase">COST BY SERVICE</h2>
+              <p className="text-xs text-gray-500 mt-0.5">Click a service to drill down into Account → Region → Resource</p>
+            </div>
+            <span className="text-xs text-gray-400 font-mono bg-gray-900 px-2 py-0.5 rounded border border-gray-800">
+              {topServices.length} Services
+            </span>
+          </div>
+
+          {topServices.length === 0 ? (
+            <p className="text-xs text-gray-500 py-4 text-center">No service cost breakdown available for this scope.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead>
+                  <tr className="border-b border-gray-800 text-gray-400 uppercase tracking-wider font-semibold">
+                    <th className="pb-3">Service</th>
+                    <th className="pb-3 text-right">Gross</th>
+                    <th className="pb-3 text-right">Credits</th>
+                    <th className="pb-3 text-right">Net Spend</th>
+                    <th className="pb-3 text-right">% of Gross</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-800/80">
+                  {topServices.map((srv, idx) => {
+                    const sName = srv.service || srv.name;
+                    const gVal = srv.gross ?? srv.cost ?? 0;
+                    const cVal = srv.credits ?? 0;
+                    const nVal = srv.net ?? srv.cost ?? 0;
+                    const pct = srv.gross_percentage ?? srv.percentage ?? 0;
+                    return (
+                      <tr
+                        key={idx}
+                        onClick={() => setSelectedService(sName)}
+                        className={`hover:bg-white/5 cursor-pointer transition-colors ${
+                          selectedService === sName ? 'bg-emerald-600/10 text-emerald-400 font-semibold' : ''
+                        }`}
+                      >
+                        <td className="py-3 font-semibold text-white flex items-center gap-1.5">
+                          {sName}
+                          <ChevronRight className="w-3 h-3 text-gray-500" />
+                        </td>
+                        <td className="py-3 text-right font-mono text-gray-300">{formatCurrency(gVal)}</td>
+                        <td className="py-3 text-right font-mono text-emerald-400">
+                          {cVal === 0 ? '$0.00' : `-${formatCurrency(Math.abs(cVal))}`}
+                        </td>
+                        <td className="py-3 text-right font-mono font-bold text-white">{formatCurrency(nVal)}</td>
+                        <td className="py-3 text-right font-mono text-emerald-400 font-semibold">{pct}%</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Resource Cost Drill-Down */}
+      <div className="rounded-xl bg-[#111827] border border-gray-800 p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-sm font-semibold tracking-wider text-gray-400 uppercase">RESOURCE COST DRILL-DOWN</h2>
+            <p className="text-xs text-gray-500 mt-0.5">Service &rarr; Region &rarr; Resource. Resource totals appear only when AWS provides attribution.</p>
+          </div>
+
+          {selectedService && (
+            <button
+              onClick={() => {
+                setSelectedService(null);
+                setSelectedRegion(null);
+              }}
+              className="text-xs text-emerald-400 hover:underline"
+            >
+              Clear Drill-Down Filter
+            </button>
+          )}
+        </div>
+
+        {/* Breadcrumb Navigation */}
+        <div className="flex items-center gap-2 text-xs font-medium mb-4 bg-[#0B0F17] p-2.5 rounded-lg border border-gray-800 text-gray-400">
+          <span className={`cursor-pointer hover:text-white ${!selectedService ? 'text-emerald-400 font-semibold' : ''}`} onClick={() => { setSelectedService(null); setSelectedRegion(null); }}>
+            Total ({formatCurrency(gross)})
+          </span>
+          {selectedService && (
+            <>
+              <ChevronRight className="w-3.5 h-3.5 text-gray-600" />
+              <span className={`cursor-pointer hover:text-white ${!selectedRegion ? 'text-emerald-400 font-semibold' : ''}`} onClick={() => setSelectedRegion(null)}>
+                {selectedService}
+              </span>
+            </>
+          )}
+          {selectedRegion && (
+            <>
+              <ChevronRight className="w-3.5 h-3.5 text-gray-600" />
+              <span className="text-emerald-400 font-semibold">{selectedRegion}</span>
+            </>
+          )}
+        </div>
+
+        <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
+          {drilldown?.items?.length === 0 && selectedRegion ? (
+            <p className="py-6 text-center text-xs text-gray-500">{drilldown?.message || 'No data available from AWS Cost Explorer for this resource scope.'}</p>
+          ) : drilldown?.items?.map((item: any, idx: number) => (
+            <div
+              key={idx}
+              onClick={() => {
+                if (item.level === 'SERVICE') {
+                  setSelectedService(item.name);
+                } else if (item.level === 'REGION') {
+                  setSelectedRegion(item.name);
+                }
+              }}
+              className="p-3 rounded-lg bg-[#0B0F17] border border-gray-800/80 hover:border-emerald-500/40 transition-all cursor-pointer flex justify-between items-center text-xs"
+            >
               <div>
-                <h3 className="text-white font-medium text-sm">Ask DevOps AI Copilot about your AWS Bill</h3>
-                <p className="text-gray-400 text-xs mt-0.5">
-                  Get immediate evidence-backed answers for "Why did spend increase?" or "Where can we save $10,000?".
-                </p>
+                <span className="font-semibold text-white flex items-center gap-1.5">
+                  {item.name}
+                  {item.level !== 'RESOURCE' && <ChevronRight className="w-3.5 h-3.5 text-gray-500" />}
+                </span>
+                <span className="text-[10px] font-mono text-gray-500 uppercase mt-0.5 block">
+                  {item.level}{item.aws_account_id ? ` | ${item.aws_account_id}` : ''}
+                </span>
+              </div>
+              <div className="text-right font-mono">
+                <span className="font-semibold text-emerald-400 block">{formatCurrency(item.gross || item.cost || 0)}</span>
+                <span className="text-[10px] text-gray-500 block">{item.percentage ?? 0}% of gross</span>
               </div>
             </div>
-            <button
-              onClick={() => navigate('/copilot')}
-              className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium shrink-0"
-            >
-              Open AI Copilot
-            </button>
-          </Panel>
+          ))}
         </div>
-      )}
+      </div>
+
+      {/* Savings Opportunities */}
+      <div className="rounded-xl bg-[#111827] border border-gray-800 p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-semibold tracking-wider text-gray-400 uppercase">SAVINGS OPPORTUNITIES</h2>
+          <span className="text-xs text-gray-400">{opportunities.length} opportunities identified</span>
+        </div>
+
+        {opportunities.length === 0 ? (
+          <p className="text-xs text-gray-500 py-4 text-center">No optimization opportunities detected for this scope.</p>
+        ) : (
+          <div className="space-y-3">
+            {opportunities.map((opp, idx) => (
+              <div key={idx} className="p-3.5 rounded-lg bg-[#0B0F17] border border-gray-800 space-y-1.5 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-white">{opp.title || opp.name}</span>
+                  <span className="font-semibold text-emerald-400">
+                    {formatCurrency(opp.estimated_monthly_waste || opp.potential_saving_monthly || 0)}/mo potential saving
+                  </span>
+                </div>
+                <p className="text-gray-400">{opp.why || opp.recommendation}</p>
+                <div className="flex items-center justify-between pt-1 text-[11px] text-gray-500">
+                  <span>Resource: {opp.resource_id}</span>
+                  <span className="font-mono text-emerald-500">Confidence: {opp.confidence || 'HIGH'}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <p className="text-xs text-gray-500 mt-4 pt-3 border-t border-gray-800">
+          *Costs & savings derived directly from AWS Cost Explorer & CloudWatch telemetry
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function CostTrendTooltip({ active, payload, label, scope, region }: any) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="rounded-lg border border-gray-700 bg-[#111827] px-3 py-2 text-xs shadow-xl">
+      <p className="text-gray-300 font-medium">{label ? new Date(label).toISOString() : 'No timestamp'}</p>
+      <p className="text-gray-500">Scope: {scope}</p>
+      <p className="text-gray-500">Region: {region || 'All regions'} | Service: All services</p>
+      {payload.map((entry: any) => <p key={entry.dataKey} style={{ color: entry.color }}>{entry.name}: {formatCurrency(Number(entry.value || 0))}</p>)}
     </div>
   );
 }

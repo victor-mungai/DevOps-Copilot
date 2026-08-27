@@ -101,7 +101,7 @@ export function ResourceDrawer({
             className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium"
           >
             <Bot className="w-4 h-4" />
-            Ask AI about this resource
+            Ask Copilot
           </button>
         </div>
       </aside>

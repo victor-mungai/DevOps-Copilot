@@ -23,8 +23,17 @@ class PrometheusProvider:
     def avg_cpu_over_window(self, tenant_id: str, resource_id: str, days: int):
         return self._metrics.avg_cpu_over_window(tenant_id, resource_id, days)
 
+    def inactive_hours_over_window(self, tenant_id: str, resource_id: str, days: int, threshold: float):
+        return self._metrics.inactive_hours_over_window(tenant_id, resource_id, days, threshold)
+
+    def aggregate_over_window(self, tenant_id: str, resource_id: str, metric_name: str, days: int, aggregation: str = "avg"):
+        return self._metrics.aggregate_over_window(tenant_id, resource_id, metric_name, days, aggregation)
+
 
 def get_provider():
-    if os.getenv("METRIC_SOURCE", "prometheus").lower() == "dev":
+    if (
+        os.getenv("METRIC_SOURCE", "prometheus").lower() == "dev"
+        and os.getenv("ALLOW_SYNTHETIC_DEV_SOURCE", "false").lower() == "true"
+    ):
         return DevSource()
     return PrometheusProvider()

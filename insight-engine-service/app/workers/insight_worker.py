@@ -18,7 +18,7 @@ logger = logging.getLogger("insight-worker")
 
 def process_analysis_job(event: Dict[str, Any]):
     tenant_id = event.get("tenant_id")
-    region = event.get("region", "us-east-2")
+    region = event.get("region") or None
     payload = event.get("payload", {})
     job_id = payload.get("job_id")
 

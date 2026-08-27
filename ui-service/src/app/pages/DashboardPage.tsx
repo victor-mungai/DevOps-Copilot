@@ -1,422 +1,348 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { ArrowUpRight, CheckCircle2, AlertTriangle, XCircle, RefreshCw, Sparkles, TrendingUp, DollarSign } from 'lucide-react';
+import { ArrowUpRight, RefreshCw, Server, PiggyBank, Layers, AlertTriangle } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import { fetchEc2, fetchLambda, fetchRds } from '../lib/aws';
-import { formatCurrency, formatDateTime, formatNumber } from '../lib/format';
-import { useTenant } from '../lib/tenant';
+import { formatCurrency } from '../lib/format';
+import { periodQuery, useTenant } from '../lib/tenant';
+import { fetchForScope, mergeBreakdown, mergeSummaries, mergeTrends, scopedTenantIds } from '../lib/costScope';
 import type { Insight } from '../lib/types';
-import {
-  EmptyState,
-  ErrorBanner,
-  Panel,
-  SeverityBadge,
-  Spinner,
-  StatCard,
-} from '../components/dashboard/primitives';
-
-interface Aggregates {
-  ec2: number;
-  rds: number;
-  lambda: number;
-  insights: Insight[];
-  estimatedWaste: number;
-  coverage: any;
-}
 
 export function DashboardPage() {
   const navigate = useNavigate();
-  const { tenantId, accountId, region, isConnected } = useTenant();
-  const [data, setData] = useState<Aggregates | null>(null);
+  const { tenantId, tenantName, accountId, region, isConnected, timePeriod, customRange, isAllAccounts, scopeLabel, workspaces } = useTenant();
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
 
-  const [costSummary, setCostSummary] = useState<any>(null);
-  const [costServices, setCostServices] = useState<any[]>([]);
+  const [summary, setSummary] = useState<any>(null);
+  const [services, setServices] = useState<any[]>([]);
+  const [trend, setTrend] = useState<any[]>([]);
+  const [insights, setInsights] = useState<Insight[]>([]);
+  const [opportunities, setOpportunities] = useState<any[]>([]);
+  const [resourcesCount, setResourcesCount] = useState<number>(0);
+  const [expandedOppId, setExpandedOppId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!tenantId) return;
     setLoading(true);
-    setError('');
+    try {
+      const regParamAmp = region ? `&region=${encodeURIComponent(region)}` : '';
+      const rangeParam = periodQuery(timePeriod, customRange);
+      const tenantIds = scopedTenantIds(tenantId, isAllAccounts, workspaces);
+      const scoped = <T,>(path: string) => isAllAccounts ? fetchForScope<T>(tenantIds, path, [] as T[]) : apiFetch<T>(path, { tenantId });
 
-    const [insightsR, ec2R, rdsR, lambdaR, covR, sumR, srvR] = await Promise.allSettled([
-      apiFetch<Insight[]>(`/v1/insights/${tenantId}?limit=200`, { tenantId }),
-      fetchEc2(tenantId, region),
-      fetchRds(tenantId, region),
-      fetchLambda(tenantId, region),
-      apiFetch<any>(`/v1/insights/coverage`, { tenantId }),
-      apiFetch<any>(`/v1/cost/summary?range=30d`, { tenantId }),
-      apiFetch<any[]>(`/v1/cost/services?range=30d`, { tenantId }),
-    ]);
+      const [sumR, drvR, trdR, insR, oppR, ec2R, rdsR, lmbR] = await Promise.allSettled([
+        scoped<any>(`/v1/cost/summary?${rangeParam}&basis=NET_UNBLENDED${regParamAmp}`),
+        scoped<any>(`/v1/cost/services?${rangeParam}${regParamAmp}`),
+        scoped<any>(`/v1/cost/trend?${rangeParam}${regParamAmp}`),
+        isAllAccounts
+          ? fetchForScope<Insight>(tenantIds, `/v1/insights/{tenant_id}?limit=20${regParamAmp}`, [] as Insight[])
+          : apiFetch<Insight[]>(`/v1/insights/${tenantId}?limit=20${regParamAmp}`, { tenantId }),
+        scoped<any>(`/v1/cost/opportunities`),
+        isAllAccounts ? Promise.resolve([]) : fetchEc2(tenantId, region),
+        isAllAccounts ? Promise.resolve([]) : fetchRds(tenantId, region),
+        isAllAccounts ? Promise.resolve([]) : fetchLambda(tenantId, region),
+      ]);
 
-    const insights = insightsR.status === 'fulfilled' ? insightsR.value : [];
-    const coverage = covR.status === 'fulfilled' ? covR.value : null;
-    if (sumR.status === 'fulfilled') setCostSummary(sumR.value);
-    if (srvR.status === 'fulfilled') setCostServices(srvR.value);
+      if (sumR.status === 'fulfilled') setSummary(isAllAccounts ? mergeSummaries(sumR.value as any[]) : sumR.value);
+      if (drvR.status === 'fulfilled') {
+        const value = drvR.value;
+        setServices(isAllAccounts ? mergeBreakdown(value as any[], 'services') : (Array.isArray(value) ? value : (value?.services || [])));
+      }
+      if (trdR.status === 'fulfilled') setTrend(isAllAccounts ? mergeTrends(trdR.value as any[]) : (Array.isArray(trdR.value) ? trdR.value : []));
+      if (insR.status === 'fulfilled') setInsights(isAllAccounts ? (insR.value as any[]).flatMap((value) => Array.isArray(value) ? value : []) : (Array.isArray(insR.value) ? insR.value : []));
+      if (oppR.status === 'fulfilled') setOpportunities(isAllAccounts ? (oppR.value as any[]).flatMap((value) => value?.opportunities || []) : (Array.isArray(oppR.value) ? oppR.value : (oppR.value?.opportunities || [])));
 
-    setData({
-      insights,
-      ec2: ec2R.status === 'fulfilled' ? ec2R.value.length : 0,
-      rds: rdsR.status === 'fulfilled' ? rdsR.value.length : 0,
-      lambda: lambdaR.status === 'fulfilled' ? lambdaR.value.length : 0,
-      estimatedWaste: insights.reduce((sum, i) => sum + (i.estimated_monthly_waste || 0), 0),
-      coverage,
-    });
-    setLoading(false);
-  }, [tenantId, region]);
+      const ec2Cnt = ec2R.status === 'fulfilled' ? ec2R.value.length : 0;
+      const rdsCnt = rdsR.status === 'fulfilled' ? rdsR.value.length : 0;
+      const lmbCnt = lmbR.status === 'fulfilled' ? lmbR.value.length : 0;
+      setResourcesCount(ec2Cnt + rdsCnt + lmbCnt);
+    } catch (err) {
+      console.error('Failed to load overview:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [tenantId, region, timePeriod, customRange, isAllAccounts, workspaces]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const healthSummary = useMemo(() => {
-    if (data?.coverage?.health_summary) {
-      return data.coverage.health_summary;
-    }
-    return { healthy: 17, warning: 5, critical: 3, no_data: 0 };
-  }, [data]);
+  const highCount = useMemo(() => insights.filter((i) => (i.severity || '').toLowerCase() === 'high').length, [insights]);
+  const mediumCount = useMemo(() => insights.filter((i) => (i.severity || '').toLowerCase() === 'medium').length, [insights]);
+  const lowCount = useMemo(() => insights.filter((i) => (i.severity || '').toLowerCase() === 'low').length, [insights]);
+
+  const totalSavings = opportunities.reduce((acc, o) => acc + (o.estimated_monthly_waste || o.potential_saving_monthly || 0), 0);
 
   if (!isConnected) {
     return (
-      <EmptyState
-        icon={<DollarSign className="w-10 h-10" />}
-        title="No AWS account connected"
-        description="Connect an AWS account to view Leadership FinOps Cost Intelligence."
-        action={
-          <button
-            onClick={() => navigate('/onboarding')}
-            className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium"
-          >
-            Connect AWS Account
-          </button>
-        }
-      />
+      <div className="py-16 text-center">
+        <Server className="w-10 h-10 text-gray-600 mx-auto mb-3" />
+        <h2 className="text-lg font-semibold text-white">No AWS account connected</h2>
+        <p className="text-gray-400 text-sm mt-1 mb-6 max-w-sm mx-auto">
+          Connect your AWS account to monitor infrastructure, performance, and costs.
+        </p>
+        <button
+          onClick={() => navigate('/onboarding')}
+          className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium"
+        >
+          Connect AWS
+        </button>
+      </div>
     );
   }
 
+  const grossSpend = summary?.gross ?? 0;
+  const creditsSpend = summary?.adjustments ?? summary?.total_credits_and_discounts ?? summary?.credits ?? 0;
+  const netSpend = summary?.net ?? summary?.total_cost ?? summary?.gross ?? 0;
+  const changePct = summary?.change_percent ?? 0;
+  const burnRateDaily = trend.length > 0 ? (netSpend / Math.max(1, trend.length)) : netSpend / 30;
+
+  const pStart = summary?.period?.start;
+  const pEnd = summary?.period?.end;
+  const periodLabel = pStart && pEnd ? `${pStart} – ${pEnd}` : scopeLabel;
+
   return (
-    <div className="space-y-6">
-      {/* Leadership Header */}
-      <div className="flex items-start justify-between gap-4">
+    <div className="space-y-8 font-sans">
+      {/* Header */}
+      <div className="flex items-start justify-between">
         <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-semibold text-white">AWS FinOps Dashboard</h1>
-            <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-              AMORTIZED · USD
-            </span>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-blue-500/10 text-blue-400 border border-blue-500/20">
-              RECONCILED
+          <h1 className="text-xl font-semibold text-white">Overview</h1>
+          <div className="flex flex-wrap items-center gap-3 text-sm text-gray-400 mt-1">
+            <span className="text-white font-medium">{tenantName}</span>
+            <span>·</span>
+            <span>AWS Account {accountId}</span>
+            <span>·</span>
+            <span className="text-gray-400">{region}</span>
+            <span>·</span>
+            <span className="text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 text-xs font-mono">
+              {scopeLabel}
             </span>
           </div>
-          <p className="text-gray-400 text-sm mt-1">
-            Leadership Cost Intelligence & Executive Overview {accountId ? `· Account ${accountId}` : ''}
-          </p>
         </div>
-        <button
-          onClick={() => void load()}
-          disabled={loading}
-          className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-700 text-gray-300 hover:text-white hover:border-gray-600 text-sm disabled:opacity-40"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => void load()}
+            disabled={loading}
+            className="p-1.5 rounded-lg border border-gray-800 text-gray-400 hover:text-white hover:border-gray-700 disabled:opacity-40"
+            title="Refresh"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
       </div>
 
-      {error && <ErrorBanner message={error} />}
-
-      {loading && !data ? (
-        <Spinner label="Loading FinOps Intelligence…" />
-      ) : (
-        <>
-          {/* Executive FinOps stat cards */}
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-            <StatCard
-              label="Month-to-Date Spend"
-              value={formatCurrency(costSummary?.mtd_spend ?? costSummary?.total ?? 0.0)}
-              hint={`Current billing period (↑ ${costSummary?.change_percent ?? 0}%)`}
-              accent="text-white"
-            />
-            <StatCard
-              label="Projected Monthly"
-              value={formatCurrency(costSummary?.projected_monthly ?? 0.0)}
-              hint="Forecasted monthly total"
-              accent="text-amber-400"
-            />
-            <StatCard
-              label="Budget Variance"
-              value={`+${formatCurrency(costSummary?.projected_variance ?? 0.0)}`}
-              hint={`Over $${((costSummary?.budget ?? 50000)/1000).toFixed(0)}K target`}
-              accent="text-red-400"
-            />
-            <StatCard
-              label="Potential Savings"
-              value={formatCurrency(costSummary?.potential_savings ?? 0.0)}
-              hint="Optimizable opportunity"
-              accent="text-emerald-400"
-            />
-            <StatCard
-              label="Optimization Score"
-              value={`${costSummary?.optimization_score ?? 100} / 100`}
-              hint="FinOps Efficiency Score"
-              accent="text-emerald-400"
-            />
+      {/* Executive Financial Ledger Banner */}
+      <div className="rounded-xl bg-[#111827] border border-gray-800 p-6 space-y-4 font-sans">
+        <div className="flex items-center justify-between border-b border-gray-800/80 pb-3">
+          <div>
+            <h2 className="text-xs font-bold uppercase tracking-wider text-emerald-400">FINANCIAL SUMMARY</h2>
+            <p className="text-sm font-semibold text-white mt-0.5">{periodLabel}</p>
           </div>
-
-          {/* Executive Environment Health Banner */}
-          <Panel className="p-4 bg-gradient-to-r from-[#111827] via-[#0f172a] to-[#111827] border-gray-800">
-            <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-              <div>
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-                  AWS Environment Health & Analysis Coverage (100% Analyzed)
-                </h3>
-                <p className="text-sm text-gray-300 mt-0.5">
-                  Analyzing {data?.coverage?.total_resources || 25} monitored resources across EC2, RDS, EBS & Lambda
-                </p>
-              </div>
-
-              <div className="flex items-center gap-6">
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  <span className="text-sm text-gray-300 font-medium">Healthy</span>
-                  <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 font-bold text-sm">
-                    {healthSummary.healthy}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 text-amber-400" />
-                  <span className="text-sm text-gray-300 font-medium">Warning</span>
-                  <span className="px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-400 font-bold text-sm">
-                    {healthSummary.warning}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <XCircle className="w-4 h-4 text-red-400" />
-                  <span className="text-sm text-gray-300 font-medium">Critical</span>
-                  <span className="px-2 py-0.5 rounded-md bg-red-500/10 text-red-400 font-bold text-sm">
-                    {healthSummary.critical}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-gray-500" />
-                  <span className="text-sm text-gray-400 font-medium">No Data</span>
-                  <span className="px-2 py-0.5 rounded-md bg-gray-800 text-gray-400 font-bold text-sm">
-                    {healthSummary.no_data}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </Panel>
-
-          {/* Top Cost Drivers & What Changed Section */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Top Cost Drivers */}
-            <Panel className="p-5">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h2 className="text-white font-medium">Top Cost Drivers by Service</h2>
-                  <p className="text-gray-400 text-xs mt-0.5">Where is the money going this month?</p>
-                </div>
-                <button
-                  onClick={() => navigate('/cost-intelligence')}
-                  className="text-xs text-emerald-400 hover:text-emerald-300 flex items-center gap-1"
-                >
-                  Cost Breakdown <ArrowUpRight className="w-3.5 h-3.5" />
-                </button>
-              </div>
-
-              <div className="space-y-4">
-                {costServices.length > 0 ? (
-                  costServices.slice(0, 5).map((srv, idx) => (
-                    <CostDriverBar
-                      key={srv.service}
-                      name={srv.service}
-                      cost={srv.cost}
-                      percent={srv.percentage}
-                      color={idx === 0 ? 'bg-emerald-500' : idx === 1 ? 'bg-blue-500' : idx === 2 ? 'bg-amber-500' : idx === 3 ? 'bg-purple-500' : 'bg-gray-500'}
-                    />
-                  ))
-                ) : (
-                  <>
-                    <CostDriverBar name="EC2 (Compute)" cost={18430.0} percent={43.5} color="bg-emerald-500" />
-                    <CostDriverBar name="RDS (Databases)" cost={11240.0} percent={26.5} color="bg-blue-500" />
-                    <CostDriverBar name="S3 (Storage)" cost={4210.0} percent={9.9} color="bg-amber-500" />
-                    <CostDriverBar name="Lambda (Serverless)" cost={2830.0} percent={6.7} color="bg-purple-500" />
-                    <CostDriverBar name="Other" cost={5671.0} percent={13.4} color="bg-gray-500" />
-                  </>
-                )}
-              </div>
-            </Panel>
-
-            {/* What Changed Section */}
-            <Panel className="p-5 border-emerald-500/20 bg-gradient-to-br from-[#111827] to-[#0d1726]">
-              <div className="flex items-center gap-2 mb-4">
-                <TrendingUp className="w-4 h-4 text-emerald-400" />
-                <h2 className="text-white font-medium">What Changed This Month?</h2>
-              </div>
-
-              <div className="space-y-3">
-                <div className="p-3.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
-                  <div className="flex items-start justify-between">
-                    <span className="text-amber-300 font-semibold text-xs uppercase tracking-wide">
-                      ⚠ EC2 Spend Increased +18%
-                    </span>
-                    <span className="text-amber-400 font-bold text-xs">+$3,240/mo</span>
-                  </div>
-                  <p className="text-gray-300 text-xs mt-1">
-                    <strong>Primary driver:</strong> Production account / us-east-2 region.<br />
-                    <strong>Cause:</strong> 12 new <code className="text-amber-300 font-mono">t3.large</code> instances launched during the last 14 days.
-                  </p>
-                </div>
-
-                <div className="p-3.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-                  <div className="flex items-start justify-between">
-                    <span className="text-emerald-300 font-semibold text-xs uppercase tracking-wide">
-                      ✓ RDS Spend Decreased -11%
-                    </span>
-                    <span className="text-emerald-400 font-bold text-xs">-$1,420/mo</span>
-                  </div>
-                  <p className="text-gray-300 text-xs mt-1">
-                    <strong>Likely cause:</strong> Two staging RDS databases downsized from <code className="text-emerald-300 font-mono">db.r5.xlarge</code> to <code className="text-emerald-300 font-mono">db.t3.medium</code>.
-                  </p>
-                </div>
-              </div>
-            </Panel>
-          </div>
-
-          {/* AI Copilot & Optimization Opportunities */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <Panel className="p-5 lg:col-span-2">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h2 className="text-white font-medium">Top FinOps Savings Opportunities</h2>
-                  <p className="text-gray-400 text-xs mt-0.5">Ranked by financial dollar impact</p>
-                </div>
-                <button
-                  onClick={() => navigate('/optimization')}
-                  className="text-xs text-emerald-400 hover:text-emerald-300 flex items-center gap-1"
-                >
-                  View All Savings <ArrowUpRight className="w-3.5 h-3.5" />
-                </button>
-              </div>
-
-              <div className="divide-y divide-gray-800">
-                <OpportunityRow
-                  title="EC2 Instance Rightsizing"
-                  resource="Jenkins Production (i-0b26c9340c04eb22a)"
-                  evidence="14-day avg CPU: 4.2% · Runtime 24/7"
-                  savings={3420.0}
-                  confidence="High"
-                />
-                <OpportunityRow
-                  title="Idle RDS Database Shutdown"
-                  resource="db-prod-pg (PostgreSQL)"
-                  evidence="0 active connections over 14 days"
-                  savings={2180.0}
-                  confidence="High"
-                />
-                <OpportunityRow
-                  title="Unattached EBS Volume Cleanup"
-                  resource="vol-0912ab34cd5678ef0 (500GB gp3)"
-                  evidence="Unattached for 21 consecutive days"
-                  savings={1120.0}
-                  confidence="High"
-                />
-                <OpportunityRow
-                  title="Lambda Over-provisioned Memory"
-                  resource="process-telemetry (1024MB)"
-                  evidence="Peak memory used: 142MB (86% waste)"
-                  savings={840.0}
-                  confidence="Medium"
-                />
-              </div>
-            </Panel>
-
-            <Panel className="p-5 border-emerald-500/20 bg-gradient-to-br from-[#111827] to-[#0c1626]">
-              <div className="flex items-center gap-2 mb-3">
-                <Sparkles className="w-4 h-4 text-emerald-400" />
-                <h2 className="text-white font-medium">AI Cost Copilot</h2>
-              </div>
-              <p className="text-gray-300 text-xs leading-relaxed mb-4">
-                Ask executive billing questions grounded in factual AWS Cost Explorer data and metric evidence.
-              </p>
-
-              <div className="space-y-2 mb-4">
-                <PromptChip text="Why did AWS spend increase?" onClick={() => navigate('/copilot')} />
-                <PromptChip text="Where can we save $10,000 this month?" onClick={() => navigate('/copilot')} />
-                <PromptChip text="Are we on track to exceed budget?" onClick={() => navigate('/copilot')} />
-              </div>
-
-              <button
-                onClick={() => navigate('/copilot')}
-                className="w-full py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold"
-              >
-                Launch AI Copilot →
-              </button>
-            </Panel>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function CostDriverBar({ name, cost, percent, color }: { name: string; cost: number; percent: number; color: string }) {
-  return (
-    <div>
-      <div className="flex justify-between text-xs mb-1">
-        <span className="text-gray-300 font-medium">{name}</span>
-        <span className="text-white font-mono">{formatCurrency(cost)} ({percent}%)</span>
-      </div>
-      <div className="h-2 rounded-full bg-gray-800 overflow-hidden">
-        <div className={`h-full ${color}`} style={{ width: `${percent}%` }} />
-      </div>
-    </div>
-  );
-}
-
-function OpportunityRow({
-  title,
-  resource,
-  evidence,
-  savings,
-  confidence,
-}: {
-  title: string;
-  resource: string;
-  evidence: string;
-  savings: number;
-  confidence: string;
-}) {
-  return (
-    <div className="py-3 flex items-center justify-between gap-4">
-      <div>
-        <div className="flex items-center gap-2">
-          <span className="text-white text-sm font-medium">{title}</span>
-          <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/10 text-emerald-400 font-semibold border border-emerald-500/20">
-            {confidence}
+          <span className="text-xs text-gray-400 font-mono bg-gray-900 px-2.5 py-1 rounded border border-gray-800">
+            Source: AWS Cost Explorer
           </span>
         </div>
-        <p className="text-gray-400 text-xs mt-0.5 font-mono">{resource}</p>
-        <p className="text-gray-500 text-xs mt-0.5">{evidence}</p>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
+          {/* Gross Spend */}
+          <div className="p-4 rounded-lg bg-[#0B0F17] border border-gray-800">
+            <span className="text-xs font-semibold uppercase tracking-wider text-gray-400 block">Gross Spend</span>
+            <span className="text-2xl font-bold text-white mt-1 block">{formatCurrency(grossSpend)}</span>
+            <span className="text-xs text-gray-500 mt-1 block">Raw usage/charges before credits</span>
+          </div>
+
+          {/* AWS Credits */}
+          <div className="p-4 rounded-lg bg-[#0B0F17] border border-gray-800">
+            <span className="text-xs font-semibold uppercase tracking-wider text-gray-400 block">AWS Credits and Discounts</span>
+            <span className="text-2xl font-bold text-emerald-400 mt-1 block">
+              {creditsSpend === 0 ? '$0.00' : `-${formatCurrency(Math.abs(creditsSpend))}`}
+            </span>
+            <span className="text-xs text-emerald-500/80 mt-1 block">Signed credits, refunds, and discounts</span>
+          </div>
+
+          {/* Net Spend */}
+          <div className="p-4 rounded-lg bg-[#0B0F17] border border-gray-800">
+            <span className="text-xs font-semibold uppercase tracking-wider text-gray-400 block">Net Spend</span>
+            <span className="text-2xl font-bold text-white mt-1 block">{formatCurrency(netSpend)}</span>
+            <span className="text-xs text-gray-500 mt-1 block">Resulting net payable spend</span>
+          </div>
+        </div>
       </div>
-      <div className="text-right shrink-0">
-        <span className="text-emerald-400 font-bold text-sm">{formatCurrency(savings)}/mo</span>
-        <p className="text-gray-500 text-[10px]">{formatCurrency(savings * 12)}/yr</p>
+
+      {/* 6 Top-Level FinOps Metrics */}
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+        {/* Total Spend */}
+        <div className="rounded-xl bg-[#111827] border border-gray-800 p-4 flex flex-col justify-between">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">TOTAL SPEND</p>
+          <p className="text-xl font-bold text-white mt-1">{formatCurrency(netSpend)}</p>
+          <span className="text-[10px] text-gray-500 mt-1 font-mono">{timePeriod.toUpperCase()}</span>
+        </div>
+
+        {/* MoM Change */}
+        <div className="rounded-xl bg-[#111827] border border-gray-800 p-4 flex flex-col justify-between">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">MOM CHANGE</p>
+          <p className={`text-xl font-bold mt-1 ${changePct >= 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+            {changePct >= 0 ? '↑' : '↓'} {Math.abs(changePct)}%
+          </p>
+          <span className="text-[10px] text-gray-500 mt-1">vs prev period</span>
+        </div>
+
+        {/* Burn Rate */}
+        <div className="rounded-xl bg-[#111827] border border-gray-800 p-4 flex flex-col justify-between">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">BURN RATE</p>
+          <p className="text-xl font-bold text-white mt-1">{formatCurrency(burnRateDaily)}</p>
+          <span className="text-[10px] text-gray-500 mt-1">per day avg</span>
+        </div>
+
+        {/* Potential Savings */}
+        <div className="rounded-xl bg-[#111827] border border-gray-800 p-4 flex flex-col justify-between">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">SAVINGS</p>
+          <p className="text-xl font-bold text-emerald-400 mt-1">{formatCurrency(totalSavings)}</p>
+          <span className="text-[10px] text-emerald-500/80 mt-1">potential / mo</span>
+        </div>
+
+        {/* AWS Accounts */}
+        <div className="rounded-xl bg-[#111827] border border-gray-800 p-4 flex flex-col justify-between">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">AWS ACCOUNTS</p>
+          <p className="text-xl font-bold text-white mt-1">{isAllAccounts ? workspaces.length : 1}</p>
+          <span className="text-[10px] text-gray-500 mt-1">{isAllAccounts ? 'All connected' : 'Active account'}</span>
+        </div>
+
+        {/* Cost Issues */}
+        <div className="rounded-xl bg-[#111827] border border-gray-800 p-4 flex flex-col justify-between">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">ISSUES</p>
+          <p className="text-xl font-bold text-amber-400 mt-1">{highCount + mediumCount}</p>
+          <span className="text-[10px] text-gray-500 mt-1">{highCount} High priority</span>
+        </div>
+      </div>
+
+      {/* Cost Trend Chart */}
+      <div className="rounded-xl bg-[#111827] border border-gray-800 p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-sm font-semibold tracking-wider text-gray-400 uppercase">COST TREND</h2>
+            <p className="text-xs text-gray-500 mt-0.5">Actual AWS cost time-series · {scopeLabel}</p>
+          </div>
+          <button
+            onClick={() => navigate('/cost-intelligence')}
+            className="text-xs text-emerald-400 hover:underline flex items-center gap-1"
+          >
+            Full cost analysis <ArrowUpRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {trend.length === 0 ? (
+          <div className="h-32 flex items-center justify-center text-xs text-gray-500">
+            No daily trend points recorded for this scope.
+          </div>
+        ) : (
+          <div className="h-44 w-full pt-4">
+            <svg className="w-full h-full overflow-visible" viewBox="0 0 800 120" preserveAspectRatio="none">
+              <path
+                d={buildDynamicSvgPath(trend)}
+                fill="none"
+                stroke="#10B981"
+                strokeWidth="2.5"
+              />
+            </svg>
+            <div className="flex justify-between text-xs text-gray-500 pt-2 border-t border-gray-800">
+              {trend.slice(0, 5).map((t, idx) => (
+                <span key={idx}>{t.date || `Point ${idx + 1}`}</span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Grid: Top Cost Drivers & Savings Opportunities */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Top Cost Drivers */}
+        <div className="rounded-xl bg-[#111827] border border-gray-800 p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-semibold tracking-wider text-gray-400 uppercase">TOP COST DRIVERS</h2>
+            <span className="text-xs text-gray-500 font-mono">{timePeriod.toUpperCase()}</span>
+          </div>
+          {services.length === 0 ? (
+            <p className="text-xs text-gray-500 py-4 text-center">No cost driver breakdown available.</p>
+          ) : (
+            <div className="space-y-3">
+              {services.slice(0, 5).map((srv, idx) => (
+                <div key={idx} className="flex items-center justify-between py-2 border-b border-gray-800/60 last:border-0 text-sm">
+                  <span className="font-medium text-white">{srv.service || srv.name}</span>
+                  <div className="text-right">
+                    <span className="font-mono text-gray-200 block">{formatCurrency(srv.gross || srv.cost || 0)}</span>
+                    <span className="text-xs text-emerald-400 font-mono block">{srv.gross_percentage ?? srv.percentage ?? 0}% of gross</span>
+                    {(srv.credits ?? 0) !== 0 && (
+                      <span className="text-[10px] text-emerald-400 font-mono">Credit: -{formatCurrency(Math.abs(srv.credits))}</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Savings Opportunities */}
+        <div className="rounded-xl bg-[#111827] border border-gray-800 p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-semibold tracking-wider text-gray-400 uppercase">SAVINGS OPPORTUNITIES</h2>
+            <button
+              onClick={() => navigate('/savings')}
+              className="text-xs text-emerald-400 hover:underline flex items-center gap-1"
+            >
+              All savings <ArrowUpRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {opportunities.length === 0 ? (
+            <p className="text-xs text-gray-500 py-4 text-center">No savings opportunities identified.</p>
+          ) : (
+            <div className="space-y-3">
+              {opportunities.slice(0, 4).map((opp, idx) => {
+                const oppId = opp.id || `opp-${idx}`;
+                const isExpanded = expandedOppId === oppId;
+                const savings = opp.estimated_monthly_waste || opp.potential_saving_monthly || 0;
+                return (
+                  <div key={oppId} className="rounded-lg bg-[#0B0F17] border border-gray-800/80 p-3 space-y-2 text-xs">
+                    <div
+                      onClick={() => setExpandedOppId(isExpanded ? null : oppId)}
+                      className="flex items-center justify-between cursor-pointer"
+                    >
+                      <span className="font-semibold text-white">{opp.title || opp.name}</span>
+                      <span className="font-semibold text-emerald-400">{formatCurrency(savings)}/mo saving</span>
+                    </div>
+
+                    {isExpanded && (
+                      <div className="pt-2 border-t border-gray-800 space-y-1 text-[11px] text-gray-400">
+                        <p><span className="text-gray-300 font-medium">Resource:</span> {opp.resource_id}</p>
+                        <p><span className="text-gray-300 font-medium">Account:</span> {opp.account || tenantId}</p>
+                        <p><span className="text-gray-300 font-medium">Evidence:</span> {opp.evidence || 'AWS telemetry scan'}</p>
+                        <p><span className="text-emerald-400 font-medium">Recommendation:</span> {opp.recommendation || 'Stop or resize resource'}</p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
-function PromptChip({ text, onClick }: { text: string; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className="w-full text-left p-2 rounded bg-gray-800/60 hover:bg-gray-800 text-gray-300 hover:text-white text-xs border border-gray-700/50 transition-colors"
-    >
-      "{text}"
-    </button>
-  );
+function buildDynamicSvgPath(trend: any[], width = 800, height = 120): string {
+  if (!trend || trend.length === 0) return 'M0,100 L800,100';
+  const costs = trend.map((t) => Number(t.net ?? t.cost ?? t.gross ?? 0));
+  const maxCost = Math.max(...costs, 0.00001);
+  const minCost = Math.min(...costs, 0);
+  const range = Math.max(maxCost - minCost, 0.00001);
+
+  const points = trend.map((t, idx) => {
+    const x = (idx / Math.max(1, trend.length - 1)) * width;
+    const val = Number(t.net ?? t.cost ?? t.gross ?? 0);
+    const y = height - ((val - minCost) / range) * (height - 20) - 10;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  return `M${points.join(' L')}`;
 }

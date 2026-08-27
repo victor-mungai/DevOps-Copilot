@@ -161,7 +161,7 @@ export function MetricsPage() {
     <div>
       <div className="flex items-start justify-between mb-6 gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-white">Metrics Explorer</h1>
+          <h1 className="text-xl font-semibold text-white">Metrics</h1>
           <p className="text-gray-400 text-sm mt-1">
             Unified timeline · {region} · synchronized crosshair across panels
             {lastUpdated && (
@@ -293,6 +293,7 @@ export function MetricsPage() {
               unit={m.unit}
               color={m.color}
               kind={m.key}
+              resource={resource}
               data={series[m.key]}
               showBrush={idx === activeMetrics.length - 1}
               rangeMinutes={range.minutes}
@@ -308,6 +309,7 @@ function MetricPanel({
   label,
   unit,
   color,
+  resource,
   data,
   showBrush,
   rangeMinutes,
@@ -316,6 +318,7 @@ function MetricPanel({
   unit: string;
   color: string;
   kind: MetricKind;
+  resource: string;
   data: MetricPoint[];
   showBrush: boolean;
   rangeMinutes: number;
@@ -324,18 +327,15 @@ function MetricPanel({
     () =>
       data.map((p) => {
         const d = new Date(p.t);
-        const timeStr =
-          rangeMinutes > 1440
-            ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
-              ' ' +
-              d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
-            : d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
         return {
-          time: timeStr,
+          ts: d.getTime(),
+          exactTime: p.t,
           value: p.value,
+          resource,
+          metric: label,
         };
       }),
-    [data, rangeMinutes]
+    [data, resource, label]
   );
 
   return (
@@ -361,14 +361,22 @@ function MetricPanel({
           <ResponsiveContainer width="100%" height="100%">
             <RLineChart data={chartData} syncId={SYNC_ID} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-              <XAxis dataKey="time" tick={{ fill: '#6b7280', fontSize: 11 }} minTickGap={40} />
+              <XAxis
+                type="number"
+                dataKey="ts"
+                domain={['dataMin', 'dataMax']}
+                tick={{ fill: '#6b7280', fontSize: 11 }}
+                tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+              />
               <YAxis tick={{ fill: '#6b7280', fontSize: 11 }} />
               <Tooltip
                 contentStyle={{ background: '#111827', border: '1px solid #374151', borderRadius: 8, color: '#fff' }}
                 labelStyle={{ color: '#9ca3af' }}
+                labelFormatter={(_, payload) => payload?.[0]?.payload?.exactTime || 'No timestamp'}
+                formatter={(value) => [String(value), `${label} (${unit})`]}
               />
               <Line type="monotone" dataKey="value" stroke={color} strokeWidth={2} dot={false} isAnimationActive={false} />
-              {showBrush && <Brush dataKey="time" height={20} stroke="#374151" fill="#0B0F17" travellerWidth={8} />}
+              {showBrush && <Brush dataKey="ts" height={20} stroke="#374151" fill="#0B0F17" travellerWidth={8} tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} />}
             </RLineChart>
           </ResponsiveContainer>
         </div>

@@ -18,11 +18,16 @@ router = APIRouter()
 
 def _enforce_tenant(request: Request, tenant_id: str) -> None:
     """Feature 6: a path tenant_id must match the gateway-injected identity."""
-    header_tenant = getattr(request.state, "tenant_id", None)
+    header_tenant = getattr(request.state, "tenant_id", None) or request.headers.get("X-Tenant-ID")
     if header_tenant and header_tenant != tenant_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Tenant mismatch",
+        )
+    if not header_tenant:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="X-Tenant-ID header is required",
         )
 
 
@@ -31,28 +36,37 @@ def health():
     return {"status": "healthy", "service": "insight-engine"}
 
 
+@router.get("/rag/diagnostics")
+def rag_diagnostics(request: Request, x_tenant_id: str | None = Header(None)):
+    tenant_id = getattr(request.state, "tenant_id", None) or x_tenant_id
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="X-Tenant-ID header is required")
+    from .services import rag_service
+    return rag_service.diagnostics(tenant_id)
+
+
 @router.get("/insights/coverage")
 def get_analysis_coverage(
+    request: Request,
     region: str | None = None,
     db: Session = Depends(get_db),
-    tenant_id: str | None = None,
     x_tenant_id: str | None = Header(None),
 ):
-    """Debug/Audit endpoint returning 100% Analysis Coverage metrics and health states."""
-    t_id = tenant_id or x_tenant_id or "1a81c82d-d090-4dbd-96db-27c09f982bbc"
+    """Return tenant-scoped analysis coverage from live AWS resource discovery."""
+    t_id = getattr(request.state, "tenant_id", None) or x_tenant_id
+    if not t_id:
+        raise HTTPException(status_code=400, detail="X-Tenant-ID header is required")
     from .sources.provider import get_provider
     from .services.canonical_resource import get_canonical_resource
 
-    instances = [
-        {"instance_id": "i-0b26c9340c04eb22a", "instance_type": "t3.medium", "tags": {"Name": "Jenkins Production"}, "state": "running", "region": "us-east-2a"},
-        {"instance_id": "i-060a947e1e823ea71", "instance_type": "t3.small", "tags": {"Name": "Staging Web App"}, "state": "running", "region": "us-east-2b"},
-        {"instance_id": "i-0ad3c6e402779dc42", "instance_type": "t3.large", "tags": {"Name": "Payment Gateway API"}, "state": "running", "region": "us-east-2a"},
-    ]
-    rds_dbs = [{"db_id": "db-prod-pg", "engine": "postgres", "instance_class": "db.t3.medium", "status": "available"}]
-    lambda_fns = [{"function_name": "process-telemetry", "runtime": "python3.11", "memory_size": 1024}]
+    provider = get_provider()
+    instances = provider.list_ec2_instances(t_id, region=region)
+    rds_dbs = provider.list_rds_databases(t_id, region=region)
+    lambda_fns = provider.list_lambda_functions(t_id, region=region)
 
-    active_insights = insight_repository.list_insights(db, t_id, limit=200)
-    flagged_resources = {ins.resource_id: ins for ins in active_insights if ins.status == "active"}
+    all_insights = insight_repository.list_insights(db, t_id, limit=500)
+    flagged_resources = {ins.resource_id: ins for ins in all_insights if ins.status == "active"}
+    healthy_resources = {ins.resource_id: ins for ins in all_insights if ins.status == "healthy"}
 
     resources_detail = []
     healthy_count = 0
@@ -60,90 +74,136 @@ def get_analysis_coverage(
     critical_count = 0
     no_data_count = 0
 
-    # Process EC2
     for inst in instances:
         rid = inst["instance_id"]
-        c_res = get_canonical_resource(rid, "ec2", tags=inst.get("tags"), region=region or "us-east-2")
+        c_res = get_canonical_resource(
+            rid,
+            "ec2",
+            tags=inst.get("tags"),
+            region=inst.get("region") or region,
+            account_id=inst.get("account_id"),
+        )
         ins = flagged_resources.get(rid)
+        healthy_ins = healthy_resources.get(rid)
         if ins:
             health_st = "critical" if ins.severity == "high" else "warning"
             if health_st == "critical":
                 critical_count += 1
             else:
                 warning_count += 1
-        else:
+        elif healthy_ins:
             health_st = "healthy"
             healthy_count += 1
+        else:
+            health_st = "no_data"
+            no_data_count += 1
 
         resources_detail.append({
             "resource_id": rid,
             "display_name": c_res["display_name"],
             "resource_type": "EC2",
-            "metrics_available": True,
-            "rules_evaluated": 6,
+            "metrics_available": False,
+            "metrics_status": "No data available" if not ins else "available",
+            "rules_evaluated": len(__import__("app.rules.registry", fromlist=["get_rules"]).get_rules()),
             "insights_count": 1 if ins else 0,
+            "insight_status": "finding" if ins else ("Healthy / No issues detected" if healthy_ins else "No analysis data available"),
+            "evaluation_status": "evaluated" if (ins or healthy_ins) else "not_evaluated",
             "health_state": health_st,
+            "account_id": c_res["account_id"],
+            "region": c_res["region"],
         })
 
-    # Process RDS
     for db_inst in rds_dbs:
-        rid = db_inst.get("db_id") or db_inst.get("DBInstanceIdentifier", "db-prod-pg")
-        c_res = get_canonical_resource(rid, "rds", raw_name=rid, region=region or "us-east-2")
+        rid = db_inst.get("resource_id") or db_inst.get("DBInstanceIdentifier")
+        if not rid:
+            continue
+        c_res = get_canonical_resource(
+            rid,
+            "rds",
+            raw_name=rid,
+            region=db_inst.get("region") or region,
+            account_id=db_inst.get("account_id"),
+        )
         ins = flagged_resources.get(rid)
+        healthy_ins = healthy_resources.get(rid)
         if ins:
             health_st = "critical" if ins.severity == "high" else "warning"
             if health_st == "critical":
                 critical_count += 1
             else:
                 warning_count += 1
-        else:
+        elif healthy_ins:
             health_st = "healthy"
             healthy_count += 1
+        else:
+            health_st = "no_data"
+            no_data_count += 1
 
         resources_detail.append({
             "resource_id": rid,
             "display_name": c_res["display_name"],
             "resource_type": "RDS",
-            "metrics_available": True,
-            "rules_evaluated": 4,
+            "metrics_available": False,
+            "metrics_status": "No data available" if not ins else "available",
+            "rules_evaluated": len(__import__("app.rules.registry", fromlist=["get_rules"]).get_rules()),
             "insights_count": 1 if ins else 0,
+            "insight_status": "finding" if ins else ("Healthy / No issues detected" if healthy_ins else "No analysis data available"),
+            "evaluation_status": "evaluated" if (ins or healthy_ins) else "not_evaluated",
             "health_state": health_st,
+            "account_id": c_res["account_id"],
+            "region": c_res["region"],
         })
 
-    # Process Lambda
     for fn in lambda_fns:
-        rid = fn.get("function_name", "process-telemetry")
-        c_res = get_canonical_resource(rid, "lambda", raw_name=rid, region=region or "us-east-2")
+        rid = fn.get("resource_id") or fn.get("function_name")
+        if not rid:
+            continue
+        c_res = get_canonical_resource(
+            rid,
+            "lambda",
+            raw_name=rid,
+            region=fn.get("region") or region,
+            account_id=fn.get("account_id"),
+        )
         ins = flagged_resources.get(rid)
+        healthy_ins = healthy_resources.get(rid)
         if ins:
             health_st = "warning"
             warning_count += 1
-        else:
+        elif healthy_ins:
             health_st = "healthy"
             healthy_count += 1
+        else:
+            health_st = "no_data"
+            no_data_count += 1
 
         resources_detail.append({
             "resource_id": rid,
             "display_name": c_res["display_name"],
             "resource_type": "LAMBDA",
-            "metrics_available": True,
-            "rules_evaluated": 3,
+            "metrics_available": False,
+            "metrics_status": "No data available" if not ins else "available",
+            "rules_evaluated": len(__import__("app.rules.registry", fromlist=["get_rules"]).get_rules()),
             "insights_count": 1 if ins else 0,
+            "insight_status": "finding" if ins else ("Healthy / No issues detected" if healthy_ins else "No analysis data available"),
+            "evaluation_status": "evaluated" if (ins or healthy_ins) else "not_evaluated",
             "health_state": health_st,
+            "account_id": c_res["account_id"],
+            "region": c_res["region"],
         })
 
     total = len(resources_detail)
-    analyzed = total
+    analyzed = total if total else 0
     with_insights = len([r for r in resources_detail if r["insights_count"] > 0])
 
     return {
         "tenant_id": t_id,
         "total_resources": total,
-        "resources_with_metrics": total,
+        "resources_with_metrics": len([r for r in resources_detail if r["metrics_available"]]),
         "resources_analyzed": analyzed,
         "resources_with_insights": with_insights,
         "resources_without_insights": max(0, total - with_insights),
-        "coverage_percent": 100,
+        "coverage_percent": round((analyzed / total) * 100, 2) if total else 0,
         "health_summary": {
             "healthy": healthy_count,
             "warning": warning_count,
@@ -194,7 +254,7 @@ def analyze(
         event_type="insight.analysis.requested",
         tenant_id=tenant_id,
         source="insight-api",
-        region=region or "us-east-2",
+        region=region or "",
         payload={"job_id": job.id}
     )
 
@@ -206,7 +266,7 @@ def analyze(
         import threading
         event_payload = {
             "tenant_id": tenant_id,
-            "region": region or "us-east-2",
+            "region": region or "",
             "payload": {"job_id": job.id}
         }
         threading.Thread(target=process_analysis_job, args=(event_payload,), daemon=True).start()
@@ -230,6 +290,17 @@ def get_job_status(job_id: str, db: Session = Depends(get_db)):
     return job.to_dict()
 
 
+@router.get("/insights")
+def list_all_insights(
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+):
+    from .db.models import InsightRecord
+    rows = db.query(InsightRecord).order_by(InsightRecord.created_at.desc()).offset(offset).limit(limit).all()
+    return [row.to_dict() for row in rows]
+
+
 @router.get("/insights/{tenant_id}", response_model=list)
 def list_tenant_insights(
     tenant_id: str,
@@ -238,6 +309,8 @@ def list_tenant_insights(
     offset: int = 0,
     db: Session = Depends(get_db),
 ):
+    if tenant_id.lower() in ["all", "all-accounts", "all_accounts"]:
+        return list_all_insights(limit=limit, offset=offset, db=db)
     _enforce_tenant(request, tenant_id)
     rows = insight_repository.list_insights(db, tenant_id, limit=limit, offset=offset)
     return [row.to_dict() for row in rows]
@@ -252,8 +325,6 @@ def explain(
 ):
     _enforce_tenant(request, tenant_id)
 
-    # Sprint 2.1: build the full tenant-scoped context (insights + live metrics +
-    # region + RAG) and answer with a bounded sliding window of history.
     context = build_ai_context(
         db,
         tenant_id,
@@ -264,7 +335,12 @@ def explain(
     )
     history = [m.model_dump() for m in payload.history]
     result = llm_service.explain(
-        context, payload.question, history=history, request_id=get_request_id(request)
+        context,
+        payload.question,
+        history=history,
+        request_id=get_request_id(request),
+        model=payload.model,
+        api_key=payload.api_key,
     )
     primary = context.get("primary_insight") or {}
     return ExplainResponse(

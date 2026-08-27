@@ -12,7 +12,9 @@ class OldSnapshotsRule:
         # Checks snapshots older than 30 days
         for snap in ctx.ebs:
             if snap.get("is_snapshot") and snap.get("age_days", 0) > 30:
-                snap_id = snap.get("snapshot_id", "snap-0987654321fedcba0")
+                snap_id = snap.get("snapshot_id")
+                if not snap_id:
+                    continue
                 findings.append(
                     make_finding(
                         tenant_id=ctx.tenant_id,
@@ -23,7 +25,7 @@ class OldSnapshotsRule:
                         issue="Stale EBS Snapshot (>30 days old)",
                         recommendation="Review and delete outdated EBS snapshots to reduce monthly storage costs.",
                         confidence="high",
-                        estimated_monthly_waste=45.0,
+                        estimated_monthly_waste=0.0,
                         window_days=30.0,
                     )
                 )

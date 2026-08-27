@@ -22,6 +22,10 @@ class Ec2Signal:
     tags: dict = field(default_factory=dict)
     state: Optional[str] = None
     region: Optional[str] = None
+    account_id: Optional[str] = None
+    observed_cost: Optional[float] = None
+    cost_window_days: Optional[int] = None
+    inactive_hours: Optional[float] = None
 
 
 @dataclass
@@ -35,8 +39,10 @@ class AnalysisContext:
     # Future signal lists (populated as the connector exposes them):
     ebs: list[dict] = field(default_factory=list)
     rds: list[dict] = field(default_factory=list)
+    lambda_functions: list[dict] = field(default_factory=list)
     s3: list[dict] = field(default_factory=list)
     security_groups: list[dict] = field(default_factory=list)
+    resource_costs: dict[tuple[str | None, str, str | None], float] = field(default_factory=dict)
 
 
 @runtime_checkable
@@ -63,11 +69,18 @@ def make_finding(
     avg_cpu: Optional[float] = None,
     instance_type: Optional[str] = None,
     window_days: Optional[float] = None,
+    aws_account_id: Optional[str] = None,
+    region: Optional[str] = None,
+    evidence: Optional[str] = None,
+    observed_cost: Optional[float] = None,
+    inactive_hours: Optional[float] = None,
 ) -> dict:
     """Build a finding dict matching the `insights` table columns. Non-cost rules
     leave estimated_monthly_waste at 0."""
     return {
         "tenant_id": tenant_id,
+        "aws_account_id": aws_account_id,
+        "region": region,
         "resource_id": resource_id,
         "resource_type": resource_type,
         "severity": severity,
@@ -79,4 +92,7 @@ def make_finding(
         "avg_cpu": avg_cpu,
         "instance_type": instance_type,
         "window_days": window_days,
+        "evidence": evidence,
+        "observed_cost": observed_cost,
+        "inactive_hours": inactive_hours,
     }

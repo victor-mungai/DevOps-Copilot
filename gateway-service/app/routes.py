@@ -29,9 +29,28 @@ def _proxy_or_404(tenant_id: str, request: Request, service: str, path: str) -> 
     return forward_request(service, _path_with_tenant(path, tenant_id), request)
 
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, status
+import os
 
 router = APIRouter()
+
+
+def _authorized_tenant(request: Request, tenant_id: str) -> str:
+    if tenant_id.lower() in ["all", "all-accounts", "all_accounts"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Explicit tenant scope is required")
+    header_tenant = request.headers.get("X-Tenant-ID", "")
+    # In local development auth is intentionally disabled, so the explicit
+    # tenant header is the authoritative request scope. A stale request-state
+    # value must not reject a correctly scoped request.
+    if os.getenv("AUTH_DISABLED", "true").lower() == "true":
+        resolved = header_tenant
+    else:
+        resolved = getattr(request.state, "tenant_id", None)
+    if not resolved:
+        raise HTTPException(status_code=400, detail="X-Tenant-ID header is required")
+    if resolved != tenant_id and resolved.lower() not in ["all", "all-accounts", "all_accounts"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant mismatch")
+    return resolved
 
 
 @router.get("/v1/health")
@@ -53,13 +72,39 @@ async def list_connected_tenants(request: Request):
 
 @router.get("/v1/tenants/{tenant_id}/onboarding-link")
 async def onboarding_link(request: Request, tenant_id: str):
+    _authorized_tenant(request, tenant_id)
     return await forward_request(
         "onboarding", f"/tenants/{tenant_id}/onboarding-link", request, inject_tenant=False
     )
 
 
+@router.get("/v1/tenants/{tenant_id}/users")
+async def list_workspace_users(request: Request, tenant_id: str):
+    _authorized_tenant(request, tenant_id)
+    return await forward_request("onboarding", f"/tenants/{tenant_id}/users", request)
+
+
+@router.post("/v1/tenants/{tenant_id}/users")
+async def create_workspace_user(request: Request, tenant_id: str):
+    _authorized_tenant(request, tenant_id)
+    return await forward_request("onboarding", f"/tenants/{tenant_id}/users", request)
+
+
+@router.patch("/v1/tenants/{tenant_id}/users/{user_id}")
+async def update_workspace_user(request: Request, tenant_id: str, user_id: str):
+    _authorized_tenant(request, tenant_id)
+    return await forward_request("onboarding", f"/tenants/{tenant_id}/users/{user_id}", request)
+
+
+@router.delete("/v1/tenants/{tenant_id}/users/{user_id}")
+async def delete_workspace_user(request: Request, tenant_id: str, user_id: str):
+    _authorized_tenant(request, tenant_id)
+    return await forward_request("onboarding", f"/tenants/{tenant_id}/users/{user_id}", request)
+
+
 @router.post("/v1/tenants/{tenant_id}/verify")
 async def verify_role(request: Request, tenant_id: str):
+    _authorized_tenant(request, tenant_id)
     return await forward_request(
         "onboarding", f"/tenants/{tenant_id}/verify", request, inject_tenant=False
     )
@@ -67,6 +112,7 @@ async def verify_role(request: Request, tenant_id: str):
 
 @router.get("/v1/aws/{tenant_id}/ec2/instances")
 async def ec2_instances(request: Request, tenant_id: str):
+    _authorized_tenant(request, tenant_id)
     return await forward_request(
         "aws_connector", f"/aws/{tenant_id}/ec2/instances", request
     )
@@ -74,6 +120,7 @@ async def ec2_instances(request: Request, tenant_id: str):
 
 @router.get("/v1/aws/{tenant_id}/rds/databases")
 async def rds_instances(request: Request, tenant_id: str):
+    _authorized_tenant(request, tenant_id)
     return await forward_request(
         "aws_connector", f"/aws/{tenant_id}/rds/databases", request
     )
@@ -81,6 +128,7 @@ async def rds_instances(request: Request, tenant_id: str):
 
 @router.get("/v1/aws/{tenant_id}/lambda/functions")
 async def lambda_functions(request: Request, tenant_id: str):
+    _authorized_tenant(request, tenant_id)
     return await forward_request(
         "aws_connector", f"/aws/{tenant_id}/lambda/functions", request
     )
@@ -88,13 +136,23 @@ async def lambda_functions(request: Request, tenant_id: str):
 
 @router.get("/v1/aws/{tenant_id}/cloudwatch/metrics")
 async def cloudwatch_metrics(request: Request, tenant_id: str):
+    _authorized_tenant(request, tenant_id)
     return await forward_request(
         "aws_connector", f"/aws/{tenant_id}/cloudwatch/metrics", request
     )
 
 
+@router.post("/v1/aws/{tenant_id}/cost-and-usage")
+async def aws_cost_and_usage(request: Request, tenant_id: str):
+    _authorized_tenant(request, tenant_id)
+    return await forward_request(
+        "aws_connector", f"/aws/{tenant_id}/cost-and-usage", request
+    )
+
+
 @router.post("/v1/aws/{tenant_id}/cloudwatch/metric-statistics")
 async def cloudwatch_metric_statistics(request: Request, tenant_id: str):
+    _authorized_tenant(request, tenant_id)
     return await forward_request(
         "aws_connector", f"/aws/{tenant_id}/cloudwatch/metric-statistics", request
     )
@@ -132,11 +190,13 @@ async def metrics_collect_run(request: Request):
 
 @router.post("/v1/metrics/collect/tenant/{tenant_id}")
 async def metrics_collect_tenant(request: Request, tenant_id: str):
+    _authorized_tenant(request, tenant_id)
     return await forward_request("metrics", f"/collect/tenant/{tenant_id}", request)
 
 
 @router.post("/v1/insights/{tenant_id}/analyze")
 async def insights_analyze(request: Request, tenant_id: str):
+    _authorized_tenant(request, tenant_id)
     return await forward_request(
         "insight", f"/insights/{tenant_id}/analyze", request
     )
@@ -149,6 +209,7 @@ async def insights_coverage(request: Request):
 
 @router.get("/v1/insights/{tenant_id}")
 async def insights_list(request: Request, tenant_id: str):
+    _authorized_tenant(request, tenant_id)
     return await forward_request("insight", f"/insights/{tenant_id}", request)
 
 
@@ -159,6 +220,7 @@ async def insights_job_status(request: Request, job_id: str):
 
 @router.post("/v1/insights/{tenant_id}/explain")
 async def insights_explain(request: Request, tenant_id: str):
+    _authorized_tenant(request, tenant_id)
     return await forward_request(
         "insight", f"/insights/{tenant_id}/explain", request
     )
@@ -204,7 +266,16 @@ async def cost_reconciliation(request: Request):
     return await forward_request("cost", "/cost/reconciliation", request)
 
 
+@router.get("/v1/cost/drilldown")
+async def cost_drilldown(request: Request):
+    return await forward_request("cost", "/cost/drilldown", request)
+
+
+@router.get("/v1/cost/opportunities")
+async def cost_opportunities(request: Request):
+    return await forward_request("cost", "/cost/opportunities", request)
+
+
 @router.post("/v1/cost/collect")
 async def cost_collect(request: Request):
     return await forward_request("cost", "/cost/collect", request)
-

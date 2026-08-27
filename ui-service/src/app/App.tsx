@@ -35,6 +35,7 @@ export default function App() {
                 <Route path="metrics" element={<MetricsPage />} />
                 <Route path="insights" element={<InsightsPage />} />
                 <Route path="optimization" element={<OptimizationPage />} />
+                <Route path="savings" element={<OptimizationPage />} />
                 <Route path="copilot" element={<CopilotPage />} />
                 <Route path="cost" element={<CostPage />} />
                 <Route path="alerts" element={<AlertsPage />} />

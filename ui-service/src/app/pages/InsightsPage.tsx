@@ -1,26 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { Play, RefreshCw, Lightbulb, PlugZap } from 'lucide-react';
+import { Play, RefreshCw, Bot, Server } from 'lucide-react';
 import { apiFetch, errorMessage } from '../lib/api';
-import { formatCurrency, formatDateTime } from '../lib/format';
+import { formatCurrency } from '../lib/format';
 import { useTenant } from '../lib/tenant';
-import type { AnalyzeResponse, Insight } from '../lib/types';
-import {
-  EmptyState,
-  ErrorBanner,
-  Panel,
-  SeverityBadge,
-  Spinner,
-} from '../components/dashboard/primitives';
+import type { Insight } from '../lib/types';
+import { ErrorBanner, Spinner } from '../components/dashboard/primitives';
 
-const ALL = 'all';
-
-interface AsyncJobResponse {
-  job_id?: string;
-  status?: string;
-  message?: string;
-  insights_found?: number;
-}
+type FilterSev = 'all' | 'critical' | 'high' | 'medium';
 
 export function InsightsPage() {
   const navigate = useNavigate();
@@ -30,9 +17,7 @@ export function InsightsPage() {
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState('');
 
-  const [severity, setSeverity] = useState(ALL);
-  const [category, setCategory] = useState(ALL);
-  const [resourceType, setResourceType] = useState(ALL);
+  const [severityFilter, setSeverityFilter] = useState<FilterSev>('all');
 
   const load = useCallback(async () => {
     if (!tenantId) return;
@@ -54,28 +39,12 @@ export function InsightsPage() {
     setError('');
     try {
       const analyzePath = region ? `/v1/insights/${tenantId}/analyze?region=${encodeURIComponent(region)}` : `/v1/insights/${tenantId}/analyze`;
-      const res = await apiFetch<AsyncJobResponse>(analyzePath, {
+      await apiFetch<any>(analyzePath, {
         method: 'POST',
         tenantId,
       });
 
-      if (res.job_id) {
-        let attempts = 0;
-        while (attempts < 15) {
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-          attempts++;
-          try {
-            const jobStatus = await apiFetch<AsyncJobResponse>(`/v1/insights/jobs/${res.job_id}`, { tenantId });
-            if (jobStatus.status === 'completed' || jobStatus.status === 'failed') {
-              break;
-            }
-          } catch (_) {
-            break;
-          }
-        }
-      }
-
-      // Re-load the full persisted list so the table reflects everything stored.
+      // Poll until done or reload
       const rows = await apiFetch<Insight[]>(`/v1/insights/${tenantId}?limit=200`, { tenantId });
       setInsights(rows);
     } catch (e) {
@@ -87,72 +56,49 @@ export function InsightsPage() {
 
   useEffect(() => {
     if (tenantId) {
-      void runAnalysis();
+      void load();
     }
-  }, [tenantId, region, runAnalysis]);
-
-  const categories = useMemo(
-    () => Array.from(new Set(insights.map((i) => i.category).filter(Boolean))),
-    [insights]
-  );
-  const resourceTypes = useMemo(
-    () => Array.from(new Set(insights.map((i) => i.resource_type).filter(Boolean))),
-    [insights]
-  );
+  }, [tenantId, region, load]);
 
   const filtered = useMemo(
     () =>
       insights.filter(
-        (i) =>
-          (severity === ALL || i.severity?.toLowerCase() === severity) &&
-          (category === ALL || i.category === category) &&
-          (resourceType === ALL || i.resource_type === resourceType)
+        (i) => severityFilter === 'all' || i.severity?.toLowerCase() === severityFilter
       ),
-    [insights, severity, category, resourceType]
+    [insights, severityFilter]
   );
 
   if (!isConnected) {
     return (
-      <EmptyState
-        icon={<PlugZap className="w-10 h-10" />}
-        title="No AWS account connected"
-        description="Connect an AWS account before generating insights."
-        action={
-          <button
-            onClick={() => navigate('/onboarding')}
-            className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium"
-          >
-            Connect AWS
-          </button>
-        }
-      />
+      <div className="py-16 text-center text-gray-400 font-sans">
+        Connect an AWS account to view insights and active findings.
+      </div>
     );
   }
 
   return (
-    <div>
-      <div className="flex items-start justify-between mb-8 gap-4">
+    <div className="space-y-6 font-sans">
+      {/* Header */}
+      <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-white">Insights Center</h1>
-          <p className="text-gray-400 text-sm mt-1">
-            Cost, performance and reliability findings for your environment.
-          </p>
+          <h1 className="text-xl font-semibold text-white">Insights</h1>
+          <p className="text-sm text-gray-400 mt-0.5">{insights.length} active findings</p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+
+        <div className="flex items-center gap-2">
           <button
             onClick={() => void load()}
             disabled={loading}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-700 text-gray-300 hover:text-white hover:border-gray-600 text-sm disabled:opacity-40"
+            className="p-2 rounded-lg border border-gray-800 text-gray-400 hover:text-white hover:border-gray-700 disabled:opacity-40"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            Refresh
           </button>
           <button
             onClick={() => void runAnalysis()}
             disabled={analyzing}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-sm font-medium"
+            className="flex items-center gap-2 px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold disabled:opacity-40"
           >
-            <Play className={`w-4 h-4 ${analyzing ? 'animate-pulse' : ''}`} />
+            <Play className={`w-3.5 h-3.5 ${analyzing ? 'animate-pulse' : ''}`} />
             {analyzing ? 'Analyzing…' : 'Run analysis'}
           </button>
         </div>
@@ -160,102 +106,111 @@ export function InsightsPage() {
 
       {error && <ErrorBanner message={error} />}
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-3 mb-5">
-        <FilterSelect label="Severity" value={severity} onChange={setSeverity} options={['high', 'medium', 'low']} />
-        <FilterSelect label="Category" value={category} onChange={setCategory} options={categories} />
-        <FilterSelect label="Resource" value={resourceType} onChange={setResourceType} options={resourceTypes} />
+      {/* Severity Filter Tabs */}
+      <div className="flex gap-2">
+        {(['all', 'critical', 'high', 'medium'] as FilterSev[]).map((s) => (
+          <button
+            key={s}
+            onClick={() => setSeverityFilter(s)}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold capitalize transition-colors ${
+              severityFilter === s
+                ? 'bg-emerald-600/15 text-emerald-400 border border-emerald-600/30'
+                : 'bg-[#111827] text-gray-400 hover:text-white border border-gray-800'
+            }`}
+          >
+            {s}
+          </button>
+        ))}
       </div>
 
       {loading && insights.length === 0 ? (
-        <Spinner label="Loading insights…" />
+        <div className="py-12 flex justify-center">
+          <Spinner label="Loading findings…" />
+        </div>
       ) : filtered.length === 0 ? (
-        <EmptyState
-          icon={<Lightbulb className="w-10 h-10" />}
-          title={insights.length === 0 ? 'No insights yet' : 'No insights match these filters'}
-          description={
-            insights.length === 0
-              ? 'Run an analysis to scan this account for cost-optimization and performance issues.'
-              : 'Try clearing one of the filters above.'
-          }
-        />
+        <div className="p-8 rounded-xl bg-[#111827] border border-gray-800 text-center text-gray-400 text-sm">
+          No active findings match the selected severity.
+        </div>
       ) : (
-        <Panel className="overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-gray-400 border-b border-gray-800">
-                  <Th>Severity</Th>
-                  <Th>Category</Th>
-                  <Th>Resource</Th>
-                  <Th>Issue</Th>
-                  <Th>Recommendation</Th>
-                  <Th>Est. Waste</Th>
-                  <Th>Created</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((i) => (
-                  <tr key={i.id} className="border-b border-gray-800/60 hover:bg-white/[0.02]">
-                    <Td><SeverityBadge value={i.severity} /></Td>
-                    <Td className="text-gray-300">{i.category}</Td>
-                    <Td>
-                      <span className="text-white">{i.resource_id}</span>
-                      {i.instance_type && <span className="text-gray-500"> · {i.instance_type}</span>}
-                    </Td>
-                    <Td className="text-gray-300">{i.issue}</Td>
-                    <Td className="text-gray-400 max-w-xs">{i.recommendation}</Td>
-                    <Td className="text-emerald-400 whitespace-nowrap">
-                      {formatCurrency(i.estimated_monthly_waste)}/mo
-                    </Td>
-                    <Td className="text-gray-500 whitespace-nowrap">{formatDateTime(i.created_at)}</Td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="px-4 py-3 text-xs text-gray-500 border-t border-gray-800">
-            Showing {filtered.length} of {insights.length} insights
-          </div>
-        </Panel>
+        <div className="space-y-4">
+          {filtered.map((item) => (
+            <FindingCard key={item.id} item={item} onAskCopilot={() => navigate(`/copilot?prompt=${encodeURIComponent(item.title || item.issue)}`)} />
+          ))}
+        </div>
       )}
     </div>
   );
 }
 
-function FilterSelect({
-  label,
-  value,
-  onChange,
-  options,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  options: string[];
-}) {
-  return (
-    <label className="flex items-center gap-2 text-xs text-gray-400">
-      {label}
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="bg-[#0B0F17] border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-white focus:outline-none focus:border-emerald-500"
-      >
-        <option value={ALL}>All</option>
-        {options.map((o) => (
-          <option key={o} value={o}>
-            {o}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
+function FindingCard({ item, onAskCopilot }: { item: Insight; onAskCopilot: () => void }) {
+  const navigate = useNavigate();
+  const sev = (item.severity || 'medium').toUpperCase();
 
-function Th({ children }: { children: React.ReactNode }) {
-  return <th className="px-4 py-3 font-medium whitespace-nowrap">{children}</th>;
-}
-function Td({ children, className = '' }: { children: React.ReactNode; className?: string }) {
-  return <td className={`px-4 py-3 align-top ${className}`}>{children}</td>;
+  const badgeStyle =
+    sev === 'CRITICAL' || sev === 'HIGH'
+      ? 'text-red-400 bg-red-500/10 border-red-500/20'
+      : sev === 'MEDIUM'
+      ? 'text-amber-400 bg-amber-500/10 border-amber-500/20'
+      : 'text-gray-300 bg-gray-800 border-gray-700';
+
+  return (
+    <div className="rounded-xl bg-[#111827] border border-gray-800 p-6 space-y-4">
+      {/* Severity Badge & Title */}
+      <div>
+        <span className={`inline-block px-2.5 py-0.5 rounded text-[10px] font-bold tracking-wider uppercase border mb-2 ${badgeStyle}`}>
+          {sev}
+        </span>
+        <h2 className="text-base font-semibold text-white">{item.title || item.issue}</h2>
+      </div>
+
+      {/* Resource Context */}
+      <div className="bg-[#0B0F17] rounded-lg border border-gray-800/80 p-3.5 text-xs space-y-1">
+        <div className="flex items-center justify-between text-gray-300 font-medium">
+          <span>{item.resource_id}</span>
+          {item.instance_type && <span className="font-mono text-gray-400">{item.instance_type}</span>}
+        </div>
+        {typeof item.avg_cpu === 'number' && (
+          <p className="text-gray-500">CPU average: {item.avg_cpu}%</p>
+        )}
+      </div>
+
+      {/* 3 Core Operational Answers: What happened? Why does it matter? What should I do? */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1 text-xs">
+        <div>
+          <span className="font-semibold text-gray-400 block uppercase tracking-wider text-[10px] mb-1">What happened?</span>
+          <p className="text-gray-300">{item.issue}</p>
+        </div>
+        <div>
+          <span className="font-semibold text-gray-400 block uppercase tracking-wider text-[10px] mb-1">Why does it matter?</span>
+          <p className="text-gray-300">
+            {item.estimated_monthly_waste > 0
+              ? `Potential waste of ${formatCurrency(item.estimated_monthly_waste)}/mo in unoptimized AWS spend.`
+              : 'Presents governance, reliability or compliance risk.'}
+          </p>
+        </div>
+        <div>
+          <span className="font-semibold text-gray-400 block uppercase tracking-wider text-[10px] mb-1">What should I do?</span>
+          <p className="text-gray-300">{item.recommendation}</p>
+        </div>
+      </div>
+
+      {/* Action buttons */}
+      <div className="pt-2 flex items-center gap-3 border-t border-gray-800">
+        <button
+          onClick={() => navigate('/infrastructure')}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-white text-xs font-medium"
+        >
+          <Server className="w-3.5 h-3.5" />
+          View resource
+        </button>
+        <button
+          onClick={onAskCopilot}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium"
+        >
+          <Bot className="w-3.5 h-3.5" />
+          Ask Copilot
+        </button>
+      </div>
+    </div>
+  );
 }

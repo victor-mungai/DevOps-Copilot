@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router';
-import { DollarSign, ArrowDownRight, Filter, RefreshCw, Sparkles } from 'lucide-react';
+import { DollarSign, ArrowDownRight, Filter, RefreshCw } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import { formatCurrency } from '../lib/format';
 import { useTenant } from '../lib/tenant';
@@ -15,20 +14,23 @@ interface OpportunityCard {
   issue: string;
   category: string;
   severity: string;
-  current_cost: number;
-  optimized_cost: number;
-  monthly_savings: number;
-  annual_savings: number;
+  current_cost: number | null;
+  optimized_cost: number | null;
+  monthly_savings: number | null;
+  annual_savings: number | null;
   confidence: string;
   evidence: string;
   recommendation: string;
+  account_id?: string | null;
+  region?: string | null;
+  inactive_hours?: number | null;
 }
 
 export function OptimizationPage() {
-  const navigate = useNavigate();
   const { tenantId } = useTenant();
   const [filterSeverity, setFilterSeverity] = useState<string>('all');
   const [loading, setLoading] = useState(true);
+  const [analyzing, setAnalyzing] = useState(false);
   const [insights, setInsights] = useState<Insight[]>([]);
 
   const loadData = useCallback(async () => {
@@ -44,43 +46,62 @@ export function OptimizationPage() {
     }
   }, [tenantId]);
 
+  const runAnalysis = useCallback(async () => {
+    if (!tenantId) return;
+    setAnalyzing(true);
+    try {
+      const result = await apiFetch<{ insights?: Insight[] }>(
+        `/v1/insights/${tenantId}/analyze?async_mode=false`,
+        { method: 'POST', tenantId }
+      );
+      setInsights(Array.isArray(result.insights) ? result.insights : []);
+    } catch {
+      await loadData();
+    } finally {
+      setAnalyzing(false);
+    }
+  }, [tenantId]);
+
   useEffect(() => {
     void loadData();
   }, [loadData]);
 
-  // Transform insights into quantified financial opportunities sorted strictly by dollar impact
+  // Transform insights into quantified financial opportunities sorted strictly by dollar impact.
+  // Unknown costs stay unknown; the UI must not invent baselines or evidence.
   const opportunities: OpportunityCard[] = insights
-    .map((ins, idx) => {
-      const monthlyWaste = ins.estimated_monthly_waste || 340.0;
-      const currCost = monthlyWaste + 230.0;
-      const optCost = 230.0;
+    .filter((ins) => (ins.category || '').toLowerCase() === 'cost_optimization')
+    .map((ins) => {
+      const monthlyWaste = ins.estimated_monthly_waste || 0;
       const rtype = ins.resource_type || 'EC2';
-      const dName = (ins as any).display_name || ins.tags?.Name || ins.tags?.name || `${rtype.toUpperCase()} (${ins.resource_id})`;
+      const dName = (ins as any).display_name || ins.resource_id;
       return {
         id: ins.id,
         display_name: dName,
         resource_id: ins.resource_id,
         resource_type: rtype.toUpperCase(),
+        account_id: (ins as any).aws_account_id || null,
+        region: ins.region || null,
         issue: ins.issue,
         category: ins.category || 'cost_optimization',
         severity: ins.severity || 'medium',
-        current_cost: currCost,
-        optimized_cost: optCost,
-        monthly_savings: monthlyWaste,
-        annual_savings: monthlyWaste * 12.0,
-        confidence: ins.confidence || 'high',
-        evidence: ins.evidence || `14-day average CPU: ${ins.avg_cpu ?? 4.2}%, Network: low, Runtime: 24/7`,
-        recommendation: ins.recommendation || 'Downsize instance or schedule non-production workload outside business hours.',
+        current_cost: (ins as any).observed_cost ?? null,
+        optimized_cost: null,
+        monthly_savings: monthlyWaste > 0 ? monthlyWaste : null,
+        annual_savings: monthlyWaste > 0 ? monthlyWaste * 12.0 : null,
+        confidence: ins.confidence || 'HIGH',
+        inactive_hours: (ins as any).inactive_hours ?? null,
+        evidence: ins.evidence || (ins.avg_cpu == null ? 'Telemetry analysis over 30d' : `Average CPU: ${ins.avg_cpu}% over 30d`),
+        recommendation: ins.recommendation || 'Downsize or stop idle workload',
       };
     })
-    .sort((a, b) => b.monthly_savings - a.monthly_savings);
+    .sort((a, b) => (b.monthly_savings || 0) - (a.monthly_savings || 0));
 
   const filteredOpps = opportunities.filter((o) => {
     if (filterSeverity === 'all') return true;
     return o.severity.toLowerCase() === filterSeverity;
   });
 
-  const totalMonthlySavings = opportunities.reduce((acc, o) => acc + o.monthly_savings, 0);
+  const totalMonthlySavings = opportunities.reduce((acc, o) => acc + (o.monthly_savings || 0), 0);
   const totalAnnualSavings = totalMonthlySavings * 12.0;
 
   const priorityCounts = {
@@ -88,6 +109,7 @@ export function OptimizationPage() {
     medium: opportunities.filter((o) => o.severity.toLowerCase() === 'medium').length,
     low: opportunities.filter((o) => o.severity.toLowerCase() === 'low').length,
   };
+  const evaluations = [...insights].sort((a, b) => a.resource_id.localeCompare(b.resource_id));
 
   return (
     <div className="space-y-8">
@@ -104,12 +126,12 @@ export function OptimizationPage() {
         </div>
 
         <button
-          onClick={() => void loadData()}
-          disabled={loading}
+          onClick={() => void runAnalysis()}
+          disabled={loading || analyzing}
           className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-800 bg-gray-900 text-gray-300 hover:text-white text-sm"
         >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          Re-Analyze
+          <RefreshCw className={`w-4 h-4 ${loading || analyzing ? 'animate-spin' : ''}`} />
+          {analyzing ? 'Analyzing...' : 'Run Analysis'}
         </button>
       </div>
 
@@ -122,7 +144,9 @@ export function OptimizationPage() {
             <Panel className="p-5 border-emerald-500/30 bg-gradient-to-br from-[#111827] to-[#0a2016]">
               <p className="text-gray-400 text-xs font-medium uppercase tracking-wider">Potential Monthly Savings</p>
               <h2 className="text-3xl font-bold text-emerald-400 mt-2">{formatCurrency(totalMonthlySavings)}</h2>
-              <p className="text-xs text-emerald-300/80 mt-2">16.4% of total AWS spend</p>
+              <p className="text-xs text-emerald-300/80 mt-2">
+                {opportunities.length > 0 ? 'From quantified tenant insights' : 'No data available'}
+              </p>
             </Panel>
 
             <Panel className="p-5">
@@ -133,7 +157,7 @@ export function OptimizationPage() {
 
             <Panel className="p-5">
               <p className="text-gray-400 text-xs font-medium uppercase tracking-wider">Targeted Resources</p>
-              <h2 className="text-3xl font-bold text-white mt-2">{opportunities.length || 4}</h2>
+              <h2 className="text-3xl font-bold text-white mt-2">{opportunities.length}</h2>
               <p className="text-xs text-gray-500 mt-2">Actionable optimization targets</p>
             </Panel>
 
@@ -156,24 +180,22 @@ export function OptimizationPage() {
           {/* Executive Savings Waterfall */}
           <Panel className="p-6">
             <h2 className="text-lg font-semibold text-white mb-1">Executive Savings Waterfall</h2>
-            <p className="text-xs text-gray-400 mb-6">Current AWS monthly spend vs. estimated optimized state after applying recommendations</p>
+            <p className="text-xs text-gray-400 mb-6">Quantified savings from tenant-scoped findings</p>
 
             <div className="space-y-4">
               <div className="flex items-center justify-between text-sm font-semibold">
                 <span className="text-white">Current Monitored AWS Spend</span>
-                <span className="text-white">{formatCurrency(totalMonthlySavings + 1500.0)} / mo</span>
+                <span className="text-gray-400">No data available</span>
               </div>
 
               <div className="space-y-2 pl-4 border-l-2 border-emerald-500/40">
                 {opportunities.length > 0 ? (
                   opportunities.map((opp, idx) => {
-                    const runningTot = (totalMonthlySavings + 1500.0) - opportunities.slice(0, idx + 1).reduce((s, o) => s + o.monthly_savings, 0);
                     return (
                       <WaterfallItem
                         key={opp.id}
                         category={`${opp.issue} (${opp.display_name})`}
-                        reduction={-opp.monthly_savings}
-                        total={runningTot}
+                        reduction={opp.monthly_savings == null ? null : -opp.monthly_savings}
                       />
                     );
                   })
@@ -184,7 +206,7 @@ export function OptimizationPage() {
 
               <div className="flex items-center justify-between text-base font-bold pt-3 border-t border-gray-800 text-emerald-400">
                 <span>Optimized Monthly Estimate</span>
-                <span>{formatCurrency(1500.0)} / mo</span>
+                <span>No data available</span>
               </div>
             </div>
           </Panel>
@@ -216,7 +238,11 @@ export function OptimizationPage() {
             </div>
 
             <div className="space-y-4">
-              {filteredOpps.map((opp) => (
+              {filteredOpps.length === 0 ? (
+                <p className="py-3 text-center text-sm text-gray-400">
+                  No savings opportunity is supported by the current tenant metrics and AWS resource-cost data.
+                </p>
+              ) : filteredOpps.map((opp) => (
                 <div
                   key={opp.id}
                   className="p-4 rounded-lg bg-gray-900/60 border border-gray-800 hover:border-emerald-500/40 transition-colors space-y-3"
@@ -230,13 +256,14 @@ export function OptimizationPage() {
                           {opp.resource_type}
                         </span>
                       </div>
-                      <p className="text-gray-400 text-xs mt-1 font-mono">{opp.resource_id}</p>
+                    <p className="text-gray-400 text-xs mt-1 font-mono">{opp.resource_id}</p>
+                      <p className="text-gray-500 text-xs mt-1">Account: {opp.account_id || 'No data available'} · Region: {opp.region || 'No data available'}</p>
                     </div>
 
                     <div className="text-right">
                       <span className="text-xs text-gray-400">Potential Saving: </span>
-                      <span className="text-emerald-400 font-bold text-lg">{formatCurrency(opp.monthly_savings)} / mo</span>
-                      <span className="text-xs text-gray-500 block">({formatCurrency(opp.annual_savings)} / yr)</span>
+                      <span className="text-emerald-400 font-bold text-lg">{opp.monthly_savings == null ? 'No data available' : `${formatCurrency(opp.monthly_savings)} / mo`}</span>
+                      <span className="text-xs text-gray-500 block">{opp.annual_savings == null ? 'AWS pricing comparison required' : `(${formatCurrency(opp.annual_savings)} / yr)`}</span>
                     </div>
                   </div>
 
@@ -247,15 +274,23 @@ export function OptimizationPage() {
                     </div>
                     <div>
                       <span className="text-gray-500 block">Current Cost:</span>
-                      <span className="text-white font-semibold">{formatCurrency(opp.current_cost)} / mo</span>
+                      <span className="text-white font-semibold">
+                        {opp.current_cost == null ? 'No data available' : `${formatCurrency(opp.current_cost)} observed`}
+                      </span>
                     </div>
                     <div>
                       <span className="text-gray-500 block">Optimized Cost:</span>
-                      <span className="text-emerald-400 font-semibold">{formatCurrency(opp.optimized_cost)} / mo</span>
+                      <span className="text-emerald-400 font-semibold">
+                        {opp.optimized_cost == null ? 'No data available' : `${formatCurrency(opp.optimized_cost)} / mo`}
+                      </span>
                     </div>
                     <div>
                       <span className="text-gray-500 block">Confidence:</span>
                       <span className="text-gray-200 capitalize font-medium">{opp.confidence}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 block">Inactive Window:</span>
+                      <span className="text-white font-semibold">{opp.inactive_hours == null ? 'No data available' : `${opp.inactive_hours.toFixed(1)} hrs`}</span>
                     </div>
                   </div>
 
@@ -273,13 +308,61 @@ export function OptimizationPage() {
               ))}
             </div>
           </Panel>
+
+          <Panel className="p-6">
+            <div className="mb-4">
+              <h2 className="text-lg font-semibold text-white">Resource Evaluation</h2>
+              <p className="text-xs text-gray-400 mt-1">Live tenant-scoped analysis results. No seeded inventory or fabricated resource names.</p>
+            </div>
+            {evaluations.length === 0 ? (
+              <p className="py-4 text-center text-sm text-gray-400">No analysis has been stored for this workspace. Run Analysis to evaluate connected AWS resources.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead>
+                    <tr className="border-b border-gray-800 text-gray-400 uppercase tracking-wide">
+                      <th className="px-2 py-3">Resource</th>
+                      <th className="px-2 py-3">Account / Region</th>
+                      <th className="px-2 py-3">Metric Evidence</th>
+                      <th className="px-2 py-3">AWS Resource Cost</th>
+                      <th className="px-2 py-3">Evaluation</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {evaluations.map((item) => (
+                      <tr key={item.id} className="border-b border-gray-800/60 align-top">
+                        <td className="px-2 py-3">
+                          <div className="font-mono text-gray-100">{item.resource_id}</div>
+                          <div className="mt-1 uppercase text-gray-500">{item.resource_type}</div>
+                        </td>
+                        <td className="px-2 py-3 text-gray-400">
+                          <div className="font-mono">{item.aws_account_id || 'No data available'}</div>
+                          <div className="mt-1">{item.region || 'No data available'}</div>
+                        </td>
+                        <td className="px-2 py-3 text-gray-300">
+                          {item.avg_cpu == null ? 'No data available' : `Average CPU ${item.avg_cpu.toFixed(2)}%`}
+                        </td>
+                        <td className="px-2 py-3 text-gray-300">
+                          {item.observed_cost == null ? 'No data available' : `${formatCurrency(item.observed_cost)} observed`}
+                        </td>
+                        <td className="px-2 py-3">
+                          <SeverityBadge value={item.status || item.severity || 'info'} />
+                          <div className="mt-1 text-gray-400">{item.issue}</div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Panel>
         </div>
       )}
     </div>
   );
 }
 
-function WaterfallItem({ category, reduction, total }: { category: string; reduction: number; total: number }) {
+function WaterfallItem({ category, reduction }: { category: string; reduction: number | null }) {
   return (
     <div className="flex items-center justify-between text-xs py-1">
       <div className="flex items-center gap-2">
@@ -287,8 +370,7 @@ function WaterfallItem({ category, reduction, total }: { category: string; reduc
         <span className="text-gray-300">{category}</span>
       </div>
       <div className="flex items-center gap-4 font-mono">
-        <span className="text-emerald-400 font-semibold">{formatCurrency(reduction)} / mo</span>
-        <span className="text-gray-500 w-24 text-right">{formatCurrency(total)}</span>
+        <span className="text-emerald-400 font-semibold">{reduction == null ? 'No data available' : `${formatCurrency(reduction)} / mo`}</span>
       </div>
     </div>
   );

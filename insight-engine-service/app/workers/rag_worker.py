@@ -16,7 +16,7 @@ logger = logging.getLogger("rag-worker")
 
 def process_rag_job(event: Dict[str, Any]):
     tenant_id = event.get("tenant_id")
-    region = event.get("region", "us-east-2")
+    region = event.get("region") or ""
     payload = event.get("payload", {})
     insight_record = payload.get("insight")
     insight_id = payload.get("insight_id")

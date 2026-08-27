@@ -71,7 +71,9 @@ def get_cloudwatch_metrics(tenant_id: str) -> dict[str, Any]:
 
 
 def get_cloudwatch_metric_statistics(
-    tenant_id: str, payload: dict[str, Any]
+    tenant_id: str, payload: dict[str, Any], account_id: str | None = None
 ) -> dict[str, Any]:
     url = f"{_base_url()}/{tenant_id}/cloudwatch/metric-statistics"
+    if account_id:
+        payload = {**payload, "account_id": account_id}
     return _request_json("POST", url, json=payload)

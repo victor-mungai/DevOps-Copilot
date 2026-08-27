@@ -32,7 +32,7 @@ async def proxy_request_to(url: str, request: Request, inject_tenant: bool = Tru
 
     body = await request.body()
 
-    timeout = float(os.getenv("FORWARD_TIMEOUT", "30"))
+    timeout = float(os.getenv("FORWARD_TIMEOUT", "120"))
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
         resp = await client.request(method, url, headers=headers, content=body, params=request.query_params)
 

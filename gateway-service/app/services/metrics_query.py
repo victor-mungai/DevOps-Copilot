@@ -73,27 +73,8 @@ async def query_range(
             if resp.status_code == 200:
                 result = resp.json().get("data", {}).get("result", [])
 
-            # Fall back to instant query if range query returned empty series
-            if not result:
-                instant_url = f"{prom_url}/api/v1/query"
-                i_resp = await client.get(instant_url, params={"query": selector})
-                if i_resp.status_code == 200:
-                    i_result = i_resp.json().get("data", {}).get("result", [])
-                    if i_result:
-                        for item in i_result:
-                            val_pair = item.get("value")
-                            if val_pair and len(val_pair) == 2:
-                                ts, val = float(val_pair[0]), val_pair[1]
-                                synthesized_values = [
-                                    [ts - step, val],
-                                    [ts, val],
-                                ]
-                                result.append({
-                                    "metric": item.get("metric", {}),
-                                    "values": synthesized_values,
-                                })
-
-            # Trigger background on-demand metric collection if result is still empty
+            # Trigger background on-demand metric collection if result is still empty.
+            # Do not manufacture a range from a single instant sample.
             if not result:
                 collector_url = os.getenv("METRICS_COLLECTOR_SERVICE_URL", "http://127.0.0.1:8004")
                 try:

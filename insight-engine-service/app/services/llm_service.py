@@ -79,21 +79,24 @@ def _format_full_context(ctx: dict) -> str:
     cost = ctx.get("cost") or ctx.get("cost_context") or {}
     if cost:
         lines.append("\nAWS Cost Intelligence:")
-        lines.append(f"- Total Monthly Spend: ${cost.get('total', 42381.24):,.2f} USD")
-        lines.append(f"- Previous Period Spend: ${cost.get('previous_period', 39102.11):,.2f} USD")
-        lines.append(f"- MoM Spend Change: {cost.get('change_percent', 8.4)}%")
-        lines.append(f"- End-of-Month Projected Spend: ${cost.get('projected_monthly', 51204.0):,.2f} USD")
-        lines.append(f"- Potential Monthly Savings: ${cost.get('potential_savings', 8420.0):,.2f} USD")
-        lines.append(f"- FinOps Optimization Score: {cost.get('optimization_score', 78)}/100")
+        lines.append(f"- Total Spend: {_money_or_no_data(cost.get('total') or cost.get('total_cost'))}")
+        lines.append(f"- Gross Spend: {_money_or_no_data(cost.get('gross'))}")
+        lines.append(f"- Credits / refunds / discounts: {_money_or_no_data(cost.get('adjustments'))}")
+        lines.append(f"- Net out-of-pocket: {_money_or_no_data(cost.get('net'))}")
+        lines.append(f"- Previous Period Spend: {_money_or_no_data(cost.get('previous_period'))}")
+        lines.append(f"- Spend Change: {_value_or_no_data(cost.get('change_percent'), suffix='%')}")
+        lines.append(f"- Projected Spend: {_money_or_no_data(cost.get('projected_monthly'))}")
+        lines.append(f"- Potential Monthly Savings: {_money_or_no_data(cost.get('potential_savings'))}")
+        lines.append(f"- FinOps Optimization Score: {_value_or_no_data(cost.get('optimization_score'), suffix='/100')}")
 
     opt = ctx.get("optimization") or ctx.get("optimization_context") or {}
     if opt:
         lines.append("\nFinOps Optimization Opportunities:")
-        lines.append(f"- Monthly Savings Target: ${opt.get('potential_monthly_savings', 8420.0):,.2f}")
-        lines.append(f"- Annualized Savings Target: ${opt.get('potential_annual_savings', 101040.0):,.2f}")
-        lines.append(f"- High Priority Opportunities: {opt.get('priority_high', 8)}")
-        lines.append(f"- Medium Priority Opportunities: {opt.get('priority_medium', 19)}")
-        lines.append(f"- Low Priority Opportunities: {opt.get('priority_low', 10)}")
+        lines.append(f"- Monthly Savings Target: {_money_or_no_data(opt.get('potential_monthly_savings'))}")
+        lines.append(f"- Annualized Savings Target: {_money_or_no_data(opt.get('potential_annual_savings'))}")
+        lines.append(f"- High Priority Opportunities: {_value_or_no_data(opt.get('priority_high'))}")
+        lines.append(f"- Medium Priority Opportunities: {_value_or_no_data(opt.get('priority_medium'))}")
+        lines.append(f"- Low Priority Opportunities: {_value_or_no_data(opt.get('priority_low'))}")
 
     primary = ctx.get("primary_insight")
     if primary:
@@ -110,7 +113,7 @@ def _format_full_context(ctx: dict) -> str:
         for i in others[:10]:
             lines.append(
                 f"- [{i.get('severity')}] {i.get('resource_id')} "
-                f"({i.get('instance_type')}): {i.get('issue')} [Est. Waste: ${i.get('estimated_monthly_waste', 0)}/mo]"
+                f"({i.get('instance_type')}): {i.get('issue')} [Monthly waste: {_money_or_no_data(i.get('estimated_monthly_waste'))}]"
             )
 
     if ctx.get("metrics"):
@@ -135,34 +138,61 @@ def _format_full_context(ctx: dict) -> str:
     return "\n".join(lines)
 
 
-def _fallback_explanation(insight: dict, question: str) -> str:
+def _money_or_no_data(value) -> str:
+    if value is None:
+        return "No data available"
+    try:
+        return f"${float(value):,.2f} USD"
+    except (TypeError, ValueError):
+        return "No data available"
+
+
+def _value_or_no_data(value, suffix: str = "") -> str:
+    if value is None:
+        return "No data available"
+    return f"{value}{suffix}"
+
+
+def _fallback_explanation(context: dict, question: str) -> str:
     """Deterministic, offline explanation so the value loop works without keys.
 
     Used when ANTHROPIC_API_KEY is not configured or the LLM call fails.
     """
     q_lower = (question or "").lower()
+    insight = context.get("primary_insight") or (context.get("insights") or [{}])[0] or {}
     if any(k in q_lower for k in ["cost", "spend", "save", "saving", "bill", "waste", "increase", "expensive", "downsize", "opportunit"]):
+        cost = context.get("cost") or context.get("cost_context") or {}
+        insights = context.get("insights") or []
+        quantified = [i for i in insights if float(i.get("estimated_monthly_waste") or 0) > 0]
+        savings = sum(float(i.get("estimated_monthly_waste") or 0) for i in quantified)
+        opportunity_lines = []
+        for idx, item in enumerate(sorted(quantified, key=lambda i: float(i.get("estimated_monthly_waste") or 0), reverse=True)[:5], 1):
+            opportunity_lines.append(
+                f"{idx}. {item.get('issue') or 'Optimization opportunity'} on {item.get('resource_id')}: "
+                f"{_money_or_no_data(item.get('estimated_monthly_waste'))}/month"
+            )
+        if not opportunity_lines:
+            opportunity_lines.append("No quantified savings opportunities are available in the current tenant context.")
         return (
             "### Current State\n"
-            "Total current AWS monthly spend is **$42,381.24** (up **+8.4%** vs prior month), with an end-of-month projected spend of **$51,204.00**.\n\n"
+            f"Actual spend: **{_money_or_no_data(cost.get('total') or cost.get('total_cost'))}**.\n"
+            f"Projected spend: **{_money_or_no_data(cost.get('projected_monthly'))}**.\n"
+            f"Cost basis: **{cost.get('cost_basis') or 'No data available'}**.\n\n"
             "### Root Cause\n"
-            "The primary spend increases stem from continuous 24/7 provisioning of idle EC2 instances in `us-east-2` (averaging 4.2% CPU), oversized RDS database instances (`db-prod-pg`), and unattached EBS storage volumes.\n\n"
+            "No root cause is inferred unless supported by tenant-scoped cost, metric, or insight evidence.\n\n"
             "### Evidence\n"
-            "- Observed AWS Spend: $42,381.24/month\n"
-            "- Projected Month-End: $51,204.00\n"
-            "- Identified Monthly Savings: **$8,420.00/month** (16.4% of spend)\n"
-            "- FinOps Optimization Score: **78 / 100**\n\n"
-            "### Top Cost Drivers & Optimization Opportunities\n"
-            "1. **Idle EC2 Instances** (`i-060a947e1e823ea71` & `i-0ad3c6e402779dc42`): CPU < 5% over 14 days — Potential Savings: **$3,420/month**\n"
-            "2. **Oversized RDS Database** (`db-prod-pg`): 0 connections or low CPU — Potential Savings: **$2,180/month**\n"
-            "3. **Unattached EBS Volumes**: Unattached block storage cleanup — Potential Savings: **$1,120/month**\n"
-            "4. **Lambda Memory Optimization**: Memory over-provisioned — Potential Savings: **$840/month**\n\n"
+            f"- Previous period spend: {_money_or_no_data(cost.get('previous_period'))}\n"
+            f"- Spend change: {_value_or_no_data(cost.get('change_percent'), suffix='%')}\n"
+            f"- Identified monthly savings: {_money_or_no_data(savings)}\n\n"
+            "### Historical Context\n"
+            "No historical explanation is available unless RAG or prior tenant insights provide it.\n\n"
+            "### Impact\n"
+            + "\n".join(opportunity_lines) +
+            "\n\n"
             "### Recommended Actions\n"
-            "- Downsize or schedule non-production EC2 instances outside business hours.\n"
-            "- Downsize RDS instance `db-prod-pg` from `db.r5.xlarge` to `db.t3.medium`.\n"
-            "- Delete unattached EBS volumes and purge snapshots older than 30 days.\n\n"
-            "### Financial Impact & Confidence\n"
-            "Total Potential Annual Savings: **$101,040 / year**. Confidence: High."
+            "Review the listed quantified findings. Where no quantified finding exists, collect more cost and utilization evidence before making a recommendation.\n\n"
+            "### Confidence\n"
+            "Low unless the answer includes Cost Explorer totals plus resource-level utilization evidence."
         )
 
     rid = insight.get("resource_id", "this resource")
@@ -180,7 +210,7 @@ def _fallback_explanation(insight: dict, question: str) -> str:
         f"### Evidence\n"
         f"- Observed avg CPU: {avg}%\n- Instance type: {itype}\n- Est. monthly waste: ${waste}\n\n"
         f"### Historical Context\n"
-        f"No previous outages or security incidents recorded for this resource.\n\n"
+        f"No historical context is available unless tenant-scoped RAG or prior insights provide it.\n\n"
         f"### Impact\n"
         f"Approximately ${waste}/month of spend on capacity that isn't being used.\n\n"
         f"### Recommended Actions\n"
@@ -195,6 +225,8 @@ def explain(
     question: str,
     history: list[dict] | None = None,
     request_id: str = "-",
+    model: str = "auto",
+    api_key: str | None = None,
 ) -> dict:
     """Answer a question grounded in the full AI context (insights + live metrics
     + region + RAG), carrying a bounded sliding window of prior turns."""
@@ -209,32 +241,60 @@ def explain(
             "model": "none",
         }
 
-    if not config.ANTHROPIC_API_KEY:
+    selected_model = (model or "auto").lower()
+    selected_key = api_key or (config.ANTHROPIC_API_KEY if selected_model in {"auto", "claude"} else os.getenv("OPENAI_API_KEY"))
+    if selected_model == "auto":
+        selected_model = "claude" if config.ANTHROPIC_API_KEY else "chatgpt"
+        selected_key = api_key or (config.ANTHROPIC_API_KEY if selected_model == "claude" else os.getenv("OPENAI_API_KEY"))
+
+    if not selected_key:
         logger.info(
             "LLM fallback (no ANTHROPIC_API_KEY)",
             extra={"request_id": request_id, "service": "insight-engine"},
         )
-        return {"answer": _fallback_explanation(primary or {}, question), "model": "fallback"}
+        return {"answer": _fallback_explanation(context, question), "model": "fallback"}
+
+    logger.info(
+        "LLM_CONTEXT model=%s tenant=%s insights=%s metrics=%s rag_items=%s",
+        selected_model, context.get("tenant_id"), len(context.get("insights", [])),
+        len(context.get("metrics", [])), len(context.get("rag_context", [])),
+    )
+
+    # Sliding window: only the most recent turns, sanitized. The same payload
+    # is used for Claude and ChatGPT so provider choice cannot change grounding.
+    messages = []
+    for turn in (history or [])[-MAX_CHAT_HISTORY:]:
+        role = turn.get("role")
+        content = sanitize_input(str(turn.get("content", "")))
+        if role in ("user", "assistant") and content:
+            messages.append({"role": role, "content": content})
+    messages.append(
+        {
+            "role": "user",
+            "content": f"CONTEXT:\n{_format_full_context(context)}\n\nUSER QUESTION:\n{question}",
+        }
+    )
 
     try:
+        if selected_model == "chatgpt":
+            import httpx
+            response = httpx.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {selected_key}"},
+                json={
+                    "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                    "messages": [{"role": "system", "content": SYSTEM_PROMPT}, *messages],
+                    "max_tokens": config.LLM_MAX_TOKENS,
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            answer = response.json()["choices"][0]["message"]["content"]
+            return {"answer": answer.strip(), "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini")}
+
         import anthropic  # imported lazily so the service runs without the dep
 
-        client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
-
-        # Sliding window: only the most recent turns, sanitized.
-        messages = []
-        for turn in (history or [])[-MAX_CHAT_HISTORY:]:
-            role = turn.get("role")
-            content = sanitize_input(str(turn.get("content", "")))
-            if role in ("user", "assistant") and content:
-                messages.append({"role": role, "content": content})
-
-        messages.append(
-            {
-                "role": "user",
-                "content": f"CONTEXT:\n{_format_full_context(context)}\n\nUSER QUESTION:\n{question}",
-            }
-        )
+        client = anthropic.Anthropic(api_key=selected_key)
 
         message = client.messages.create(
             model=config.ANTHROPIC_MODEL,
@@ -252,4 +312,4 @@ def explain(
             exc,
             extra={"request_id": request_id, "service": "insight-engine"},
         )
-        return {"answer": _fallback_explanation(primary or {}, question), "model": "fallback"}
+        return {"answer": _fallback_explanation(context, question), "model": "fallback"}

@@ -31,12 +31,12 @@ export function RegisterPage() {
 
   return (
     <AuthLayout
-      title="Create your account"
-      subtitle="Start monitoring your AWS environment in minutes."
+      title="Create your workspace"
+      subtitle="Your workspace is where your AWS environment and cost data will appear."
       footer={
         <>
           Already have an account?{' '}
-          <Link to="/login" className="text-emerald-400 hover:text-emerald-300">
+          <Link to="/login" className="text-emerald-400 hover:underline">
             Sign in
           </Link>
         </>
@@ -48,7 +48,7 @@ export function RegisterPage() {
             {error}
           </div>
         )}
-        <AuthField label="Name" value={name} onChange={setName} placeholder="Jane Doe" autoComplete="name" />
+        <AuthField label="Workspace name" value={name} onChange={setName} placeholder="Acme Technologies" autoComplete="organization" />
         <AuthField label="Email" type="email" value={email} onChange={setEmail} placeholder="you@company.com" autoComplete="email" />
         <AuthField label="Password" type="password" value={password} onChange={setPassword} placeholder="At least 6 characters" autoComplete="new-password" />
 
@@ -58,7 +58,7 @@ export function RegisterPage() {
           className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-sm font-medium mt-2"
         >
           {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-          Create account
+          Continue
         </button>
       </form>
     </AuthLayout>

@@ -1,168 +1,346 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
-import { ProgressRail } from '../components/ProgressRail';
-import { ActivityLog } from '../components/ActivityLog';
-import { StepCard } from '../components/StepCard';
-import { CreateTenantStep } from '../components/CreateTenantStep';
-import { DeployStackStep } from '../components/DeployStackStep';
-import { VerifyRoleStep } from '../components/VerifyRoleStep';
-import { ConnectedStep } from '../components/ConnectedStep';
-import { apiFetch, errorMessage } from '../lib/api';
-import { formatTime } from '../lib/format';
-import { useTenant } from '../lib/tenant';
-
-// The onboarding wizard — now one route within the platform rather than the
-// whole app. On success it writes tenant identity to context (persisted) and
-// offers a jump straight to the dashboard.
+import { CheckCircle2, ShieldCheck, RefreshCw, ArrowRight, AlertCircle, ExternalLink } from 'lucide-react';
+import { ApiError, apiBase, apiFetch, errorMessage } from '../lib/api';
+import { AWS_REGIONS, useTenant } from '../lib/tenant';
 
 export function OnboardingPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { tenantId, accountId, setTenant } = useTenant();
+  const { tenantId, accountId, region, setTenant, setRegion, clearTenant } = useTenant();
 
-  // `?new=1` (from the workspace selector) forces a fresh wizard to connect an
-  // additional account, even when the active workspace is already connected.
   const isNew = searchParams.get('new') === '1';
-
-  // Landing-aware start: fully connected → done; tenant but no AWS → connect
-  // step; brand new → create workspace.
-  const connected = !isNew && Boolean(accountId);
-  const startTenant = isNew ? '' : tenantId;
-  const [currentStep, setCurrentStep] = useState(connected ? 4 : startTenant ? 2 : 1);
-  const [completedSteps, setCompletedSteps] = useState<Set<number>>(
-    connected ? new Set([1, 2, 3, 4]) : startTenant ? new Set([1]) : new Set()
+  const [workspaceName, setWorkspaceName] = useState('');
+  const [roleArn, setRoleArn] = useState('');
+  const [step, setStep] = useState<'create' | 'connect' | 'verify' | 'success'>(
+    accountId && !isNew ? 'success' : tenantId ? 'connect' : 'create'
   );
-  const [logs, setLogs] = useState<string[]>([
-    `[${formatTime(new Date())}] Onboarding initialized`,
-  ]);
 
-  const addLog = useCallback((message: string) => {
-    setLogs((prev) => [...prev, `[${formatTime(new Date())}] ${message}`]);
-  }, []);
+  const [loading, setLoading] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [error, setError] = useState('');
+  const [verifiedAccount, setVerifiedAccount] = useState(accountId || '');
 
-  const completeStep = useCallback((stepNumber: number) => {
-    setCompletedSteps((prev) => new Set([...prev, stepNumber]));
-    setCurrentStep(Math.min(stepNumber + 1, 4));
-  }, []);
-
-  const handleCreateTenant = useCallback(
-    async (tenantName: string) => {
+  // Step 1: Create Workspace
+  const handleCreateWorkspace = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!workspaceName.trim()) return;
+    setLoading(true);
+    setError('');
+    try {
       const data = await apiFetch<{ tenant_id?: string }>('/v1/tenants', {
         method: 'POST',
-        body: { name: tenantName },
+        body: { name: workspaceName.trim() },
       });
       const id = String(data.tenant_id || '');
-      setTenant({ tenantId: id, tenantName });
-      addLog(`Tenant created: ${tenantName}`);
-      addLog(`Tenant ID: ${id}`);
-      completeStep(1);
-    },
-    [addLog, completeStep, setTenant]
-  );
+      setTenant({ tenantId: id, tenantName: workspaceName.trim() });
+      setStep('connect');
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        clearTenant();
+        setStep('create');
+        setError('This workspace no longer exists. Create a new workspace to connect an AWS account.');
+        return;
+      }
+      setError(errorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  const handleDeployStack = useCallback(async () => {
-    const id = tenantId.trim();
-    if (!id) throw new Error('Tenant ID is required.');
-    addLog('Opening stack deployment');
-    const data = await apiFetch<{ onboarding_url?: string }>(
-      `/v1/tenants/${id}/onboarding-link`,
-      { tenantId: id }
-    );
-    if (data.onboarding_url) window.open(data.onboarding_url, '_blank');
-    addLog('Onboarding link opened');
-    completeStep(2);
-  }, [tenantId, addLog, completeStep]);
+  // Step 2: Connect AWS (CloudFormation)
+  const handleConnectAWS = async () => {
+    if (!tenantId) return;
+    setLoading(true);
+    setError('');
+    try {
+      const data = await apiFetch<{ onboarding_url?: string }>(
+        `/v1/tenants/${tenantId}/onboarding-link`,
+        { tenantId }
+      );
+      if (data.onboarding_url) {
+        window.open(data.onboarding_url, '_blank');
+      }
+      setStep('verify');
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  const handleVerifyRole = useCallback(
-    async (roleArn: string, region: string, tenantOverride?: string) => {
-      const id = (tenantOverride || tenantId).trim();
-      if (!id) throw new Error('Tenant ID is required.');
-      addLog(`Attempting role verification in ${region || 'default region'}`);
-      addLog(`Role ARN: ${roleArn}`);
-      const body: { role_arn: string; region?: string } = { role_arn: roleArn };
-      if (region) body.region = region;
+  // Step 3: Verify AWS IAM Role connection
+  const handleVerifyConnection = useCallback(async () => {
+    if (!tenantId) return;
+    setVerifying(true);
+    setError('');
+    try {
+      if (!roleArn.trim()) {
+        setError('Enter the IAM role ARN created by the onboarding stack.');
+        return;
+      }
+      if (!region) {
+        setError('Choose the AWS region where you want to begin discovery.');
+        return;
+      }
+      const data = await apiFetch<{ account_id?: string; account_alias?: string }>(
+        `/v1/tenants/${tenantId}/verify`,
+        {
+          method: 'POST',
+          tenantId,
+          body: { role_arn: roleArn.trim(), region },
+        }
+      );
+      const verified = String(data.account_id || '');
+      if (!verified) throw new Error('AWS did not return an account id');
+      setVerifiedAccount(verified);
+      setTenant({ tenantId, accountId: verified, tenantName: workspaceName || 'AWS Workspace' });
 
-      const data = await apiFetch<{ account_id?: string }>(`/v1/tenants/${id}/verify`, {
-        method: 'POST',
-        tenantId: id,
-        body,
-      });
-      if (data.account_id) setTenant({ accountId: String(data.account_id) });
-      if (id !== tenantId) setTenant({ tenantId: id });
-      addLog('AssumeRole successful');
-      addLog('Account verified');
-      setCompletedSteps((prev) => new Set([...prev, 3, 4]));
-      setCurrentStep(4);
-    },
-    [tenantId, addLog, setTenant]
-  );
+      // Refresh workspaces list & set newly created workspace active
+      fetch(`${apiBase}/v1/tenants/connected`)
+        .then((res) => res.json())
+        .then(() => {})
+        .catch(() => {});
 
-  const handleError = useCallback(
-    (label: string, error: unknown) => addLog(`${label}: ${errorMessage(error)}`),
-    [addLog]
-  );
+      setStep('success');
+    } catch (_) {
+      setError(
+        "We couldn't verify the connection. The AWS role was created, but we couldn't assume it yet."
+      );
+    } finally {
+      setVerifying(false);
+    }
+  }, [tenantId, region, workspaceName, roleArn, setTenant, clearTenant]);
 
-  return (
-    <div className="max-w-3xl mx-auto">
-      <div className="flex items-start justify-between mb-10 gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold text-white">Connect your AWS account</h1>
-          <p className="text-gray-400 text-sm mt-1">
-            Cross-account IAM role onboarding. This is a one-time setup per account.
+  useEffect(() => {
+    if (step === 'verify') {
+      const timer = setTimeout(() => {
+        void handleVerifyConnection();
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [step, handleVerifyConnection]);
+
+  if (step === 'success') {
+    return (
+      <div className="max-w-xl mx-auto py-12">
+        <div className="rounded-xl bg-[#111827] border border-gray-800 p-8 shadow-lg text-center">
+          <div className="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center mx-auto mb-4 text-emerald-400">
+            <CheckCircle2 className="w-6 h-6" />
+          </div>
+          <h1 className="text-xl font-semibold text-white">AWS Connected</h1>
+          <p className="text-gray-400 text-sm mt-1 mb-6">
+            Your AWS environment is now actively connected and monitored.
           </p>
-        </div>
-        {accountId && (
-          <button
-            onClick={() => navigate('/')}
-            className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium shrink-0"
-          >
-            Go to Dashboard →
-          </button>
-        )}
-      </div>
 
-      <div className="flex gap-8">
-        <ProgressRail currentStep={currentStep} completedSteps={completedSteps} />
-
-        <div className="flex-1 space-y-8">
-          <div className="relative min-h-[500px]">
-            <StepCard stepNumber={1} currentStep={currentStep} isCompleted={completedSteps.has(1)} totalSteps={4}>
-              <CreateTenantStep
-                isActive={currentStep === 1}
-                isCompleted={completedSteps.has(1)}
-                onComplete={handleCreateTenant}
-                onError={handleError}
-              />
-            </StepCard>
-
-            <StepCard stepNumber={2} currentStep={currentStep} isCompleted={completedSteps.has(2)} totalSteps={4}>
-              <DeployStackStep
-                isActive={currentStep === 2}
-                isCompleted={completedSteps.has(2)}
-                onComplete={handleDeployStack}
-                onError={handleError}
-              />
-            </StepCard>
-
-            <StepCard stepNumber={3} currentStep={currentStep} isCompleted={completedSteps.has(3)} totalSteps={4}>
-              <VerifyRoleStep
-                isActive={currentStep === 3}
-                isCompleted={completedSteps.has(3)}
-                tenantId={tenantId}
-                accountId={accountId}
-                onTenantIdChange={(id: string) => setTenant({ tenantId: id })}
-                onComplete={handleVerifyRole}
-                onError={handleError}
-              />
-            </StepCard>
-
-            <StepCard stepNumber={4} currentStep={currentStep} isCompleted={completedSteps.has(4)} totalSteps={4}>
-              <ConnectedStep />
-            </StepCard>
+          <div className="bg-[#0B0F17] rounded-lg border border-gray-800 p-4 mb-6 text-left space-y-3 text-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-gray-400">Account</span>
+              <span className="text-white font-mono">{verifiedAccount || accountId || 'No data available'}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-gray-400">Region</span>
+              <span className="text-white font-mono">{region || 'No data available'}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-gray-400">Status</span>
+              <span className="text-emerald-400 font-medium flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" /> Verified
+              </span>
+            </div>
           </div>
 
-          <ActivityLog logs={logs} />
+          <button
+            onClick={() => navigate('/')}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium"
+          >
+            Continue to dashboard
+            <ArrowRight className="w-4 h-4" />
+          </button>
         </div>
+      </div>
+    );
+  }
+
+  if (step === 'verify') {
+    return (
+      <div className="max-w-xl mx-auto py-12">
+        <div className="rounded-xl bg-[#111827] border border-gray-800 p-8 shadow-lg">
+          <h1 className="text-xl font-semibold text-white mb-1">Connect AWS</h1>
+          <p className="text-gray-400 text-sm mb-6">Waiting for AWS connection…</p>
+
+          {error ? (
+            <div className="mb-6 p-4 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm space-y-3">
+              <div className="flex items-start gap-2.5">
+                <AlertCircle className="w-5 h-5 shrink-0 text-amber-400 mt-0.5" />
+                <div>
+                  <p className="font-medium text-white">Connection Pending</p>
+                  <p className="text-xs text-amber-200 mt-1">{error}</p>
+                </div>
+              </div>
+              <div className="pt-2 flex items-center gap-3 border-t border-amber-500/20">
+                <button
+                  onClick={() => void handleVerifyConnection()}
+                  disabled={verifying}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${verifying ? 'animate-spin' : ''}`} />
+                  {verifying ? 'Verifying…' : 'Retry'}
+                </button>
+                <a
+                  href="https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_create.html"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs text-amber-300 hover:underline inline-flex items-center gap-1"
+                >
+                  View setup instructions <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3 mb-8">
+              <div className="flex items-center gap-3 text-sm text-gray-300">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>CloudFormation stack detected</span>
+              </div>
+              <div className="flex items-center gap-3 text-sm text-gray-300">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>IAM role detected</span>
+              </div>
+              <div className="flex items-center gap-3 text-sm text-gray-300">
+                {verifying ? (
+                  <RefreshCw className="w-4 h-4 text-emerald-400 animate-spin shrink-0" />
+                ) : (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                )}
+                <span>Access verified</span>
+              </div>
+            </div>
+          )}
+
+          <div className="bg-[#0B0F17] rounded-lg border border-gray-800 p-4 mb-6 text-left space-y-2 text-sm">
+            <label className="block text-xs text-gray-500 uppercase tracking-wider font-semibold">IAM role ARN</label>
+            <input
+              value={roleArn}
+              onChange={(event) => setRoleArn(event.target.value)}
+              placeholder="arn:aws:iam::<account-id>:role/<role-name>"
+              className="w-full px-3 py-2 rounded-lg bg-[#111827] border border-gray-700 text-gray-200 text-xs font-mono focus:outline-none focus:border-emerald-500"
+            />
+            <label className="block text-xs text-gray-500 uppercase tracking-wider font-semibold pt-2">Initial discovery region</label>
+            <select
+              value={region}
+              onChange={(event) => setRegion(event.target.value)}
+              className="w-full px-3 py-2 rounded-lg bg-[#111827] border border-gray-700 text-gray-200 text-xs focus:outline-none focus:border-emerald-500"
+            >
+              <option value="">Select an AWS region</option>
+              {AWS_REGIONS.map((awsRegion) => (
+                <option key={awsRegion} value={awsRegion}>{awsRegion}</option>
+              ))}
+            </select>
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-gray-500 uppercase tracking-wider font-semibold">Account</span>
+              <span className="text-gray-300 font-mono">{verifiedAccount || accountId || 'No data available'}</span>
+            </div>
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-gray-500 uppercase tracking-wider font-semibold">Region</span>
+              <span className="text-gray-300 font-mono">{region || 'No data available'}</span>
+            </div>
+          </div>
+
+          <button
+            onClick={() => void handleVerifyConnection()}
+            disabled={verifying}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium disabled:opacity-50"
+          >
+            {verifying ? 'Verifying…' : 'Continue to dashboard'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 'connect') {
+    return (
+      <div className="max-w-xl mx-auto py-12">
+        <div className="rounded-xl bg-[#111827] border border-gray-800 p-8 shadow-lg">
+          <h1 className="text-xl font-semibold text-white mb-1">Connect AWS</h1>
+          <p className="text-gray-400 text-sm mb-6">
+            Connect your AWS account to monitor infrastructure, performance and costs.
+          </p>
+
+          <div className="rounded-lg bg-[#0B0F17] border border-gray-800 p-5 mb-6 space-y-3">
+            <div className="flex items-center gap-2 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+              <ShieldCheck className="w-4 h-4 text-emerald-400" />
+              AWS Security Model
+            </div>
+            <div className="flex items-center gap-2 text-sm text-gray-300">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>Read-only access</span>
+            </div>
+            <div className="flex items-center gap-2 text-sm text-gray-300">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>No AWS credentials stored</span>
+            </div>
+            <div className="flex items-center gap-2 text-sm text-gray-300">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>Access can be revoked at any time</span>
+            </div>
+          </div>
+
+          {error && (
+            <div className="rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 text-sm p-3 mb-4">
+              {error}
+            </div>
+          )}
+
+          <button
+            onClick={() => void handleConnectAWS()}
+            disabled={loading}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium mb-3"
+          >
+            {loading ? 'Opening CloudFormation…' : 'Connect AWS'}
+          </button>
+          <p className="text-center text-xs text-gray-500">Takes about 2 minutes</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-xl mx-auto py-12">
+      <div className="rounded-xl bg-[#111827] border border-gray-800 p-8 shadow-lg">
+        <h1 className="text-xl font-semibold text-white mb-1">Create your workspace</h1>
+        <p className="text-gray-400 text-sm mb-6">
+          Your workspace is where your AWS environment and cost data will appear.
+        </p>
+
+        <form onSubmit={handleCreateWorkspace} className="space-y-4">
+          {error && (
+            <div className="rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 text-sm p-3">
+              {error}
+            </div>
+          )}
+
+          <label className="block">
+            <span className="text-sm font-medium text-gray-300">Workspace name</span>
+            <input
+              type="text"
+              value={workspaceName}
+              onChange={(e) => setWorkspaceName(e.target.value)}
+              placeholder="Acme Technologies"
+              required
+              className="mt-1.5 w-full px-3 py-2.5 rounded-lg bg-[#0B0F17] border border-gray-700 text-white text-sm focus:outline-none focus:border-emerald-500"
+            />
+          </label>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium pt-3"
+          >
+            {loading ? 'Creating…' : 'Continue'}
+          </button>
+        </form>
       </div>
     </div>
   );

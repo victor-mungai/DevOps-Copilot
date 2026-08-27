@@ -7,7 +7,7 @@ logger = logging.getLogger("metrics-collector.dispatcher")
 
 
 class CollectionJob:
-    def __init__(self, tenant_id: str, region: str = "us-east-2"):
+    def __init__(self, tenant_id: str, region: str | None = None):
         self.tenant_id = tenant_id
         self.region = region
 

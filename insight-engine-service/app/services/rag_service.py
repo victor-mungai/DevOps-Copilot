@@ -13,6 +13,9 @@ vector also carries tenant_id/region/resource metadata for filtered retrieval.
 """
 import logging
 import os
+import requests
+import time
+import threading
 from typing import Optional
 
 logger = logging.getLogger("insight-engine")
@@ -25,10 +28,46 @@ RAG_TOP_K = int(os.getenv("RAG_TOP_K", "5"))
 
 # In-memory local fallback store (tenant_id -> list of doc dicts)
 _local_rag_store: dict[str, list[dict]] = {}
+_rag_stats: dict[str, dict] = {}
+_rag_errors: dict[str, str] = {}
+_embedding_cache: dict[tuple[str, str, str], tuple[float, list[float]]] = {}
+_embedding_lock = threading.Lock()
+_embedding_calls: list[float] = []
+_EMBEDDING_CACHE_SECONDS = int(os.getenv("RAG_EMBEDDING_CACHE_SECONDS", "300"))
+_EMBEDDING_MAX_BATCH = int(os.getenv("VOYAGE_MAX_BATCH", "32"))
+_VOYAGE_REQUESTS_PER_MINUTE = int(os.getenv("VOYAGE_REQUESTS_PER_MINUTE", "3"))
 
 
 def rag_enabled() -> bool:
-    return True  # RAG active either via Pinecone or local vector fallback
+    return bool(PINECONE_API_KEY and VOYAGE_API_KEY) or bool(_local_rag_store)
+
+
+def diagnostics(tenant_id: str) -> dict:
+    """Safe operational diagnostics; never returns keys or document content."""
+    local = _local_rag_store.get(tenant_id, [])
+    stats = _rag_stats.get(tenant_id, {})
+    index = _get_index()
+    pinecone_count = None
+    if index is not None:
+        try:
+            index_stats = index.describe_index_stats()
+            namespaces = index_stats.get("namespaces", {}) if isinstance(index_stats, dict) else getattr(index_stats, "namespaces", {})
+            namespace_stats = namespaces.get(tenant_id, {}) if namespaces else {}
+            pinecone_count = namespace_stats.get("vector_count", 0) if isinstance(namespace_stats, dict) else getattr(namespace_stats, "vector_count", 0)
+        except Exception as exc:
+            _rag_errors[tenant_id] = f"Pinecone stats failed: {type(exc).__name__}"
+    return {
+        "tenant_id": tenant_id,
+        "backend": "pinecone" if (index is not None and VOYAGE_API_KEY) else "local_fallback",
+        "pinecone_connected": bool(index is not None),
+        "pinecone_namespace_vector_count": pinecone_count,
+        "error": _rag_errors.get(tenant_id) or _rag_errors.get("__global__"),
+        "namespace": tenant_id,
+        "ingestion_count": stats.get("pinecone_ingestion_count", 0) if index is not None else stats.get("ingestion_count", len(local)),
+        "retrieval_count": stats.get("retrieval_count", 0),
+        "document_ids": stats.get("document_ids", [])[-20:],
+        "metadata_fields": ["tenant_id", "region", "resource_type", "resource_id", "severity", "category", "timestamp", "source"],
+    }
 
 
 _index = None
@@ -56,15 +95,59 @@ def _get_index():
 def _embed(texts: list[str], input_type: str = "document") -> Optional[list[list[float]]]:
     if not VOYAGE_API_KEY:
         return None
+    if not texts:
+        return []
+    now = time.monotonic()
+    cache_key = (input_type, VOYAGE_MODEL, "\n".join(texts))
+    if len(texts) == 1:
+        cached = _embedding_cache.get(cache_key)
+        if cached and now - cached[0] < _EMBEDDING_CACHE_SECONDS:
+            return [cached[1]]
     try:
-        import voyageai  # lazy
-
-        client = voyageai.Client(api_key=VOYAGE_API_KEY)
-        result = client.embed(texts, model=VOYAGE_MODEL, input_type=input_type)
-        return result.embeddings
+        # Keep requests below the account quota. Batching is preferred; this
+        # guard protects query traffic when several users refresh together.
+        with _embedding_lock:
+            cutoff = now - 60
+            _embedding_calls[:] = [stamp for stamp in _embedding_calls if stamp > cutoff]
+            if len(_embedding_calls) >= _VOYAGE_REQUESTS_PER_MINUTE:
+                wait_for = 60 - (now - _embedding_calls[0])
+                if wait_for > 0:
+                    time.sleep(wait_for)
+                    now = time.monotonic()
+                    _embedding_calls[:] = [stamp for stamp in _embedding_calls if stamp > now - 60]
+            _embedding_calls.append(time.monotonic())
+        for attempt in range(3):
+            response = requests.post(
+                "https://api.voyageai.com/v1/embeddings",
+                headers={"Authorization": f"Bearer {VOYAGE_API_KEY}"},
+                json={"input": texts, "model": VOYAGE_MODEL, "input_type": input_type},
+                timeout=30,
+            )
+            if response.status_code != 429:
+                response.raise_for_status()
+                return [item["embedding"] for item in response.json().get("data", [])]
+            if attempt < 2:
+                retry_after = response.headers.get("Retry-After")
+                time.sleep(min(float(retry_after) if retry_after else 2 ** attempt, 30))
+        response.raise_for_status()
+        return []
+        
     except Exception as exc:  # noqa: BLE001
+        _rag_errors["__global__"] = f"Voyage embedding failed: {type(exc).__name__}"
         logger.warning("Voyage embedding failed: %s", exc)
         return None
+
+
+def _embed_many(texts: list[str], input_type: str) -> Optional[list[list[float]]]:
+    """Embed in provider-sized batches; one analysis run is not one request per finding."""
+    result: list[list[float]] = []
+    for offset in range(0, len(texts), _EMBEDDING_MAX_BATCH):
+        batch = texts[offset : offset + _EMBEDDING_MAX_BATCH]
+        embeddings = _embed(batch, input_type=input_type)
+        if embeddings is None or len(embeddings) != len(batch):
+            return None
+        result.extend(embeddings)
+    return result
 
 
 def _insight_text(record: dict) -> str:
@@ -75,48 +158,58 @@ def _insight_text(record: dict) -> str:
         f"confidence {record.get('confidence')}. "
         f"Avg CPU {record.get('avg_cpu')}%. "
         f"Estimated monthly waste ${record.get('estimated_monthly_waste')}. "
+        f"Observed AWS resource cost ${record.get('observed_cost')}; "
+        f"runtime hours: {record.get('hours_run', 'No data available')}. "
         f"Recommendation: {record.get('recommendation')}."
     )
 
 
 def index_insight(record: dict, region: Optional[str] = None) -> None:
-    """Embed and upsert one insight into the tenant's namespace. Uses Pinecone or local store."""
-    tenant_id = record.get("tenant_id")
-    if not tenant_id:
+    index_insights([record], region=region)
+
+
+def index_insights(records: list[dict], region: Optional[str] = None) -> None:
+    """Batch insight embeddings and upsert them into one tenant namespace."""
+    records = [record for record in records if record.get("tenant_id")]
+    if not records:
         return
-    text = _insight_text(record)
-    metadata = {
-        "tenant_id": tenant_id,
-        "region": region or record.get("region") or "",
-        "resource_type": record.get("resource_type", ""),
-        "resource_id": record.get("resource_id", ""),
-        "severity": record.get("severity", ""),
-        "category": record.get("category", ""),
-        "timestamp": record.get("created_at") or "",
-        "source": "insight",
-        "text": text,
-    }
-
-    # 1. Local Fallback In-Memory Store
+    tenant_ids = {record["tenant_id"] for record in records}
+    if len(tenant_ids) != 1:
+        raise ValueError("RAG batch must contain one tenant")
+    tenant_id = records[0]["tenant_id"]
+    prepared = []
+    stats = _rag_stats.setdefault(tenant_id, {"ingestion_count": 0, "retrieval_count": 0, "document_ids": []})
     tenant_store = _local_rag_store.setdefault(tenant_id, [])
-    # Avoid duplicate local indexing
-    if not any(item["metadata"].get("resource_id") == record.get("resource_id") and item["metadata"].get("category") == record.get("category") for item in tenant_store):
-        tenant_store.append({"text": text, "metadata": metadata, "source": "insight", "score": 0.95})
+    for record in records:
+        text = _insight_text(record)
+        metadata = {
+            "tenant_id": tenant_id, "region": region or record.get("region") or "",
+            "resource_type": record.get("resource_type", ""), "resource_id": record.get("resource_id", ""),
+            "severity": record.get("severity", ""), "category": record.get("category", ""),
+            "timestamp": record.get("created_at") or "", "source": "insight", "text": text,
+        }
+        doc_id = f"insight::{record['id']}"
+        prepared.append((doc_id, text, metadata))
+        if not any(item["metadata"].get("resource_id") == record.get("resource_id") and item["metadata"].get("category") == record.get("category") for item in tenant_store):
+            tenant_store.append({"text": text, "metadata": metadata, "source": "insight", "score": 0.95})
+            stats["ingestion_count"] += 1
+            stats["document_ids"].append(doc_id)
 
-    # 2. Pinecone Remote Upsert (if configured)
     index = _get_index()
-    if index is not None and VOYAGE_API_KEY:
-        embeddings = _embed([text], input_type="document")
-        if embeddings:
-            try:
-                index.upsert(
-                    vectors=[
-                        {"id": f"insight::{record['id']}", "values": embeddings[0], "metadata": metadata}
-                    ],
-                    namespace=tenant_id,
-                )
-            except Exception as exc:
-                logger.warning("Pinecone upsert failed: %s", exc)
+    if index is None or not VOYAGE_API_KEY:
+        return
+    embeddings = _embed_many([item[1] for item in prepared], input_type="document")
+    if not embeddings:
+        return
+    try:
+        index.upsert(
+            vectors=[{"id": item[0], "values": embeddings[idx], "metadata": item[2]} for idx, item in enumerate(prepared)],
+            namespace=tenant_id,
+        )
+        stats["pinecone_ingestion_count"] = stats.get("pinecone_ingestion_count", 0) + len(prepared)
+        logger.info("RAG_INGEST tenant=%s backend=pinecone namespace=%s count=%s metadata_fields=%s", tenant_id, tenant_id, len(prepared), sorted(prepared[0][2].keys()))
+    except Exception as exc:
+        logger.warning("Pinecone batch upsert failed: %s", exc)
 
 
 def index_document(
@@ -153,6 +246,7 @@ def retrieve(
     """
     assert tenant_id, "tenant_id is required"
     out: list[dict] = []
+    stats = _rag_stats.setdefault(tenant_id, {"ingestion_count": 0, "retrieval_count": 0, "document_ids": []})
 
     # 1. Check Pinecone Index first if configured
     index = _get_index()
@@ -185,6 +279,8 @@ def retrieve(
                         }
                     )
                 if out:
+                    stats["retrieval_count"] += len(out)
+                    logger.info("RAG_RETRIEVE tenant=%s namespace=%s count=%s", tenant_id, tenant_id, len(out))
                     return out
             except Exception as exc:
                 logger.warning("Pinecone query failed: %s", exc)
@@ -205,4 +301,7 @@ def retrieve(
         matches_local.append({**item, "score": min(0.99, score)})
 
     matches_local.sort(key=lambda x: x["score"], reverse=True)
-    return matches_local[:top_k]
+    result = matches_local[:top_k]
+    stats["retrieval_count"] += len(result)
+    logger.info("RAG_RETRIEVE tenant=%s namespace=%s backend=local_fallback count=%s", tenant_id, tenant_id, len(result))
+    return result

@@ -3,7 +3,6 @@ CPU (not idle enough for the idle rule, but a clear downsize candidate)."""
 import os
 
 from ..base import AnalysisContext, make_finding
-from ..cost_table import estimate_monthly_cost
 
 # Types considered "large" for the purpose of downsizing suggestions.
 LARGE_TYPES = {"xlarge", "2xlarge", "4xlarge", "metal", "large"}
@@ -35,8 +34,13 @@ class OversizedEc2Rule:
                 continue
             if not (OVERSIZED_CPU_FLOOR <= s.avg_cpu < OVERSIZED_CPU_CEILING):
                 continue
-            # Downsizing one step ≈ saves ~half the monthly cost (heuristic).
-            waste = round(estimate_monthly_cost(s.instance_type) * 0.5, 2)
+            family = s.instance_type.rsplit(".", 1)[0] if s.instance_type else None
+            current_size = s.instance_type.rsplit(".", 1)[-1] if s.instance_type else None
+            cost_evidence = (
+                f"AWS Cost Explorer resource-attributed net spend was ${s.observed_cost:.2f} over the last {s.cost_window_days} days."
+                if s.observed_cost is not None
+                else "No resource-level cost data available from AWS Cost Explorer for this instance."
+            )
             findings.append(
                 make_finding(
                     tenant_id=ctx.tenant_id,
@@ -45,11 +49,17 @@ class OversizedEc2Rule:
                     severity="low",
                     category=self.category,
                     issue="Oversized EC2 Instance",
-                    recommendation="CPU stays well below capacity; downsize to a smaller instance type.",
+                    recommendation=f"CPU stays well below capacity; compare the next smaller size in the same AWS family ({family + '.' if family else ''}{current_size or 'current type'}) using AWS pricing, then validate workload demand before changing it.",
                     confidence="medium",
-                    estimated_monthly_waste=waste,
+                    estimated_monthly_waste=0.0,
                     avg_cpu=round(s.avg_cpu, 2),
                     instance_type=s.instance_type,
+                    aws_account_id=s.account_id,
+                    region=s.region,
+                    evidence=(
+                        f"CloudWatch CPU averaged {s.avg_cpu:.2f}% across {s.samples} samples. {cost_evidence} Rightsizing savings: No data available until AWS pricing confirms the smaller type."
+                    ),
+                    observed_cost=s.observed_cost,
                 )
             )
         return findings

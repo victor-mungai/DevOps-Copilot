@@ -14,22 +14,22 @@ export function AuthLayout({
   footer: ReactNode;
 }) {
   return (
-    <div className="min-h-screen bg-[#0B0F17] text-white flex items-center justify-center p-6">
-      <div className="w-full max-w-md">
-        <div className="flex items-center gap-2 justify-center mb-8">
-          <div className="w-9 h-9 rounded-lg bg-emerald-600 flex items-center justify-center">
-            <Bot className="w-5 h-5 text-white" />
+    <div className="min-h-screen bg-[#0B0F17] text-white flex items-center justify-center p-6 font-sans">
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-8">
+          <div className="inline-flex items-center justify-center w-8 h-8 rounded bg-emerald-600 font-bold text-white text-xs tracking-wider mb-3">
+            DC
           </div>
-          <span className="text-lg font-semibold">DevOps Copilot</span>
+          <h2 className="text-sm font-semibold tracking-wider uppercase text-gray-300">DEVOPS COPILOT</h2>
         </div>
 
-        <div className="rounded-2xl bg-[#111827] border border-gray-800 p-8">
-          <h1 className="text-xl font-semibold">{title}</h1>
-          <p className="text-gray-400 text-sm mt-1 mb-6">{subtitle}</p>
+        <div className="rounded-xl bg-[#111827] border border-gray-800 p-6 shadow-lg">
+          <h1 className="text-lg font-semibold text-white">{title}</h1>
+          <p className="text-gray-400 text-xs mt-1 mb-6">{subtitle}</p>
           {children}
         </div>
 
-        <p className="text-center text-sm text-gray-400 mt-6">{footer}</p>
+        <p className="text-center text-xs text-gray-400 mt-6">{footer}</p>
       </div>
     </div>
   );

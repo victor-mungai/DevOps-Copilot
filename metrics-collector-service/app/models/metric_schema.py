@@ -10,9 +10,9 @@ class Metric(BaseModel):
     metric_name: str
     timestamp: datetime
     value: float
-    aws_account_id: str = "default"
-    region: str = "us-east-2"
-    resource_type: str = "ec2"
+    aws_account_id: str
+    region: str
+    resource_type: str
     labels: Dict[str, str] = Field(default_factory=dict)
 
 

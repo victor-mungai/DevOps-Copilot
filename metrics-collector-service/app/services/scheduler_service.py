@@ -22,7 +22,8 @@ def _discover_tenants() -> list[dict]:
     an account is onboarded."""
     explicit = _tenant_list()
     if explicit:
-        return [{"tenant_id": t, "region": os.getenv("DEFAULT_METRICS_REGION", "us-east-2")} for t in explicit]
+        configured_region = os.getenv("DEFAULT_METRICS_REGION", "")
+        return [{"tenant_id": t, "region": configured_region or None} for t in explicit]
 
     base = os.getenv("ONBOARDING_SERVICE_URL", "http://127.0.0.1:8001").rstrip("/")
     try:
@@ -30,9 +31,9 @@ def _discover_tenants() -> list[dict]:
         resp.raise_for_status()
         tenants = resp.json().get("tenants", [])
         return [
-            {"tenant_id": t["tenant_id"], "region": t.get("region", "us-east-2")}
+            {"tenant_id": t["tenant_id"], "region": t.get("region")}
             for t in tenants
-            if t.get("tenant_id")
+            if t.get("tenant_id") and t.get("region")
         ]
     except requests.RequestException as exc:
         logger.warning("Tenant discovery failed (%s); no tenants to collect", exc)

@@ -11,7 +11,8 @@ class Insight(Base):
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     tenant_id = Column(String, nullable=False, index=True)
-    region = Column(String, nullable=True, default="us-east-2")
+    aws_account_id = Column(String, nullable=True, index=True)
+    region = Column(String, nullable=True)
     resource_id = Column(String, nullable=False, index=True)
     resource_type = Column(String, nullable=False)
     severity = Column(String, nullable=False)
@@ -27,6 +28,8 @@ class Insight(Base):
     avg_cpu = Column(Float, nullable=True)
     instance_type = Column(String, nullable=True)
     window_days = Column(Float, nullable=True)
+    observed_cost = Column(Float, nullable=True)
+    inactive_hours = Column(Float, nullable=True)
     first_detected_at = Column(DateTime, default=datetime.utcnow)
     last_detected_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     occurrence_count = Column(Float, default=1)
@@ -36,6 +39,7 @@ class Insight(Base):
         return {
             "id": self.id,
             "tenant_id": self.tenant_id,
+            "aws_account_id": self.aws_account_id,
             "region": self.region,
             "resource_id": self.resource_id,
             "resource_type": self.resource_type,
@@ -52,6 +56,8 @@ class Insight(Base):
             "avg_cpu": self.avg_cpu,
             "instance_type": self.instance_type,
             "window_days": self.window_days,
+            "observed_cost": self.observed_cost,
+            "inactive_hours": self.inactive_hours,
             "first_detected_at": self.first_detected_at.isoformat() if self.first_detected_at else None,
             "last_detected_at": self.last_detected_at.isoformat() if self.last_detected_at else None,
             "occurrence_count": self.occurrence_count,

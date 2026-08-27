@@ -228,7 +228,7 @@ function Ec2Table({
                   onOpen({
                     kind: 'EC2',
                     resourceId: r.resourceId,
-                    title: r.name !== '—' ? r.name : r.resourceId,
+                    title: r.name || r.resourceId,
                     meta: {
                       'Instance ID': r.resourceId,
                       Name: r.name,

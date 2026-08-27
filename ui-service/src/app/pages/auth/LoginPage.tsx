@@ -29,13 +29,13 @@ export function LoginPage() {
 
   return (
     <AuthLayout
-      title="Welcome back"
-      subtitle="Sign in to your DevOps Copilot workspace."
+      title="Sign in to your workspace"
+      subtitle="Enter your credentials to access your environment."
       footer={
         <>
           Don&apos;t have an account?{' '}
-          <Link to="/register" className="text-emerald-400 hover:text-emerald-300">
-            Create one
+          <Link to="/register" className="text-emerald-400 hover:underline">
+            Create workspace
           </Link>
         </>
       }

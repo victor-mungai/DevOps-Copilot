@@ -8,7 +8,6 @@ DEFAULT_TEMPLATE_URL = (
     "https://yourdomain.com/templates/devops-copilot-onboarding.yaml"
 )
 DEFAULT_STACK_NAME = "DevOpsCopilotStack"
-DEFAULT_PLATFORM_ACCOUNT_ID = "111111111111"
 
 
 def generate_onboarding_link(external_id: str) -> str:
@@ -16,10 +15,12 @@ def generate_onboarding_link(external_id: str) -> str:
         "CLOUDFORMATION_BASE_URL", DEFAULT_CLOUDFORMATION_BASE_URL
     )
     template_url = os.getenv("TEMPLATE_URL", DEFAULT_TEMPLATE_URL)
-    stack_name = os.getenv("STACK_NAME", DEFAULT_STACK_NAME)
-    platform_account_id = os.getenv(
-        "PLATFORM_ACCOUNT_ID", DEFAULT_PLATFORM_ACCOUNT_ID
-    )
+    stack_name_base = os.getenv("STACK_NAME", DEFAULT_STACK_NAME)
+    # Avoid one tenant's stack replacing another tenant's role in the same account.
+    stack_name = f"{stack_name_base}-{external_id[-12:]}"
+    platform_account_id = os.getenv("PLATFORM_ACCOUNT_ID")
+    if not platform_account_id:
+        raise RuntimeError("PLATFORM_ACCOUNT_ID must be configured")
     params = {
         "templateURL": template_url,
         "stackName": stack_name,

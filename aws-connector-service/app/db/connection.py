@@ -1,15 +1,22 @@
 import os
 import logging
+from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
+load_dotenv()
 logger = logging.getLogger("aws-connector")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./aws_connector.db")
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg2://", 1)
+
+from sqlalchemy.pool import NullPool
 
 def _init_engine(url: str):
-    connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {"connect_timeout": 3}
+    connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {"connect_timeout": 10}
     try:
-        eng = create_engine(url, future=True, connect_args=connect_args, pool_pre_ping=True)
+        pool_kwargs = {} if url.startswith("sqlite") else {"poolclass": NullPool, "pool_pre_ping": True}
+        eng = create_engine(url, future=True, connect_args=connect_args, **pool_kwargs)
         with eng.connect() as conn:
             pass
         return eng

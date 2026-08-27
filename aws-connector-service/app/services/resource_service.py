@@ -52,3 +52,48 @@ def get_cloudwatch_metric_statistics(
         Period=period,
         Statistics=statistics,
     )
+
+
+def get_cost_and_usage(
+    creds: dict,
+    start_date: str,
+    end_date: str,
+    granularity: str,
+    metrics: list[str],
+    group_by: list[dict],
+):
+    ce = _client("ce", creds, "us-east-1")
+    return ce.get_cost_and_usage(
+        TimePeriod={"Start": start_date, "End": end_date},
+        Granularity=granularity,
+        Metrics=metrics,
+        GroupBy=group_by,
+    )
+
+
+def get_cost_and_usage_with_resources(
+    creds: dict,
+    start_date: str,
+    end_date: str,
+    metrics: list[str],
+    granularity: str = "DAILY",
+):
+    """Return AWS's native EC2 resource-level attribution without allocation."""
+    ce = _client("ce", creds, "us-east-1")
+    if granularity not in {"DAILY", "HOURLY"}:
+        raise ValueError("granularity must be DAILY or HOURLY")
+    return ce.get_cost_and_usage_with_resources(
+        TimePeriod={"Start": start_date, "End": end_date},
+        Granularity=granularity,
+        Metrics=metrics,
+        Filter={
+            "Dimensions": {
+                "Key": "SERVICE",
+                "Values": ["Amazon Elastic Compute Cloud - Compute"],
+            }
+        },
+        GroupBy=[
+            {"Type": "DIMENSION", "Key": "REGION"},
+            {"Type": "DIMENSION", "Key": "RESOURCE_ID"},
+        ],
+    )

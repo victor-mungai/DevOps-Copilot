@@ -5,6 +5,10 @@ import requests
 from .. import config
 
 
+def _region_from_az(availability_zone: str | None) -> str | None:
+    return availability_zone[:-1] if availability_zone and availability_zone[-1].isalpha() else availability_zone
+
+
 class ConnectorError(RuntimeError):
     """Raised when the aws-connector dependency is unreachable or errors.
 
@@ -32,11 +36,11 @@ def get_ec2_instances(tenant_id: str, region: str | None = None) -> dict[str, An
     assert tenant_id, "tenant_id is required"
     url = _with_region(f"{_base_url()}/{tenant_id}/ec2/instances", region)
     try:
-        resp = requests.get(url, timeout=0.5)
+        resp = requests.get(url, timeout=config.HTTP_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
-    except requests.RequestException:
-        return {}
+    except requests.RequestException as exc:
+        raise ConnectorError(str(exc)) from exc
 
 
 def list_ec2_instances(tenant_id: str, region: str | None = None) -> list[dict]:
@@ -45,6 +49,7 @@ def list_ec2_instances(tenant_id: str, region: str | None = None) -> list[dict]:
         body = payload.get("data", payload) if isinstance(payload, dict) else {}
         instances: list[dict] = []
         for reservation in body.get("Reservations", []):
+            account_id = reservation.get("OwnerId")
             for instance in reservation.get("Instances", []):
                 instance_id = instance.get("InstanceId")
                 if not instance_id:
@@ -60,12 +65,13 @@ def list_ec2_instances(tenant_id: str, region: str | None = None) -> list[dict]:
                         "instance_type": instance.get("InstanceType"),
                         "tags": tags,
                         "state": (instance.get("State") or {}).get("Name"),
-                        "region": (instance.get("Placement") or {}).get("AvailabilityZone"),
+                        "region": _region_from_az((instance.get("Placement") or {}).get("AvailabilityZone")),
+                        "account_id": account_id,
                     }
                 )
         return instances
-    except Exception:
-        return []
+    except ConnectorError:
+        raise
 
 
 def get_rds_databases(tenant_id: str, region: str | None = None) -> dict[str, Any]:
@@ -76,7 +82,7 @@ def get_rds_databases(tenant_id: str, region: str | None = None) -> dict[str, An
         resp.raise_for_status()
         return resp.json()
     except requests.RequestException as exc:
-        return {}
+        raise ConnectorError(str(exc)) from exc
 
 
 def list_rds_databases(tenant_id: str, region: str | None = None) -> list[dict]:
@@ -86,11 +92,15 @@ def list_rds_databases(tenant_id: str, region: str | None = None) -> list[dict]:
     for item in body.get("DBInstances", []):
         db_id = item.get("DBInstanceIdentifier")
         if db_id:
+            arn = item.get("DBInstanceArn", "")
+            parts = arn.split(":")
             dbs.append({
                 "resource_id": db_id,
                 "engine": item.get("Engine"),
                 "status": item.get("DBInstanceStatus"),
-                "free_storage_gb": item.get("AllocatedStorage", 100),
+                "free_storage_gb": item.get("AllocatedStorage"),
+                "region": parts[3] if len(parts) > 3 else None,
+                "account_id": parts[4] if len(parts) > 4 else None,
             })
     return dbs
 
@@ -103,7 +113,7 @@ def get_lambda_functions(tenant_id: str, region: str | None = None) -> dict[str,
         resp.raise_for_status()
         return resp.json()
     except requests.RequestException as exc:
-        return {}
+        raise ConnectorError(str(exc)) from exc
 
 
 def list_lambda_functions(tenant_id: str, region: str | None = None) -> list[dict]:
@@ -113,9 +123,13 @@ def list_lambda_functions(tenant_id: str, region: str | None = None) -> list[dic
     for item in body.get("Functions", []):
         name = item.get("FunctionName")
         if name:
+            arn = item.get("FunctionArn", "")
+            parts = arn.split(":")
             fns.append({
                 "resource_id": name,
                 "runtime": item.get("Runtime"),
                 "memory_mb": item.get("MemorySize"),
+                "region": parts[3] if len(parts) > 3 else None,
+                "account_id": parts[4] if len(parts) > 4 else None,
             })
     return fns

@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -17,6 +17,11 @@ class InsightOut(BaseModel):
     avg_cpu: Optional[float] = None
     instance_type: Optional[str] = None
     window_days: Optional[float] = None
+    observed_cost: Optional[float] = None
+    inactive_hours: Optional[float] = None
+    aws_account_id: Optional[str] = None
+    region: Optional[str] = None
+    evidence: Optional[str] = None
     created_at: Optional[str] = None
 
 
@@ -40,6 +45,8 @@ class ExplainRequest(BaseModel):
     region: Optional[str] = None
     resource_id: Optional[str] = None
     history: list[ChatMessage] = Field(default_factory=list)
+    model: Literal["auto", "chatgpt", "claude"] = "auto"
+    api_key: Optional[str] = Field(default=None, min_length=10, max_length=500)
 
 
 class RelatedIncident(BaseModel):

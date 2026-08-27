@@ -2,6 +2,7 @@ import os
 import logging
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.pool import NullPool
 
 logger = logging.getLogger("onboarding-service")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./onboarding.db")
@@ -9,7 +10,8 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./onboarding.db")
 def _init_engine(url: str):
     connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {"connect_timeout": 3}
     try:
-        eng = create_engine(url, future=True, connect_args=connect_args, pool_pre_ping=True)
+        pool_kwargs = {} if url.startswith("sqlite") else {"poolclass": NullPool, "pool_pre_ping": True}
+        eng = create_engine(url, future=True, connect_args=connect_args, **pool_kwargs)
         with eng.connect() as conn:
             pass
         return eng

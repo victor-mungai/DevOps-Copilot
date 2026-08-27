@@ -11,11 +11,11 @@ class UnattachedEbsRule:
         findings: list[dict] = []
         for vol in ctx.ebs:
             state = vol.get("state", "").lower()
-            vol_id = vol.get("volume_id", "vol-0123456789abcdef0")
-            size_gb = float(vol.get("size", 100))
+            vol_id = vol.get("volume_id")
+            if not vol_id:
+                continue
 
             if state in ("available", "unattached"):
-                monthly_waste = round(size_gb * 0.10, 2)
                 findings.append(
                     make_finding(
                         tenant_id=ctx.tenant_id,
@@ -26,7 +26,7 @@ class UnattachedEbsRule:
                         issue="Unattached EBS Volume",
                         recommendation="EBS volume is not attached to any EC2 instance. Delete volume or archive snapshot.",
                         confidence="high",
-                        estimated_monthly_waste=monthly_waste,
+                        estimated_monthly_waste=0.0,
                         window_days=14.0,
                     )
                 )

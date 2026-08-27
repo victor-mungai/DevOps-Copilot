@@ -5,7 +5,7 @@ from shared.messaging.publisher import publish
 logger = logging.getLogger("cost-collector")
 
 
-def request_cost_collection(tenant_id: str, region: str = "us-east-2", period: str = "30d") -> dict:
+def request_cost_collection(tenant_id: str, region: str = "", period: str = "30d") -> dict:
     event = create_event(
         event_type=EVENT_COST_COLLECTION_REQUESTED,
         tenant_id=tenant_id,

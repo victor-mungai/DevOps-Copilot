@@ -6,6 +6,10 @@ Plain SQL migrations for the shared PostgreSQL database (Supabase).
 |---|---|---|
 | `migrations/0001_core_schema.sql` | `tenants`, `aws_accounts`, `insights` | **Required for first run** |
 | `migrations/0002_conversations.sql` | `conversations`, `session_summaries` | Phase 2 (conversation memory) — optional now |
+| `migrations/0003_tenant_scoped_observability.sql` | scoped `insights` columns and `aws_costs` | Required for strict tenant/account/region isolation |
+| `migrations/0006_resource_cost_attribution.sql` | native Cost Explorer resource-attribution cache | Required for resource-level cost drill-down and metric-backed FinOps evidence |
+| `migrations/0007_insight_cost_evidence.sql` | observed resource cost and inactive-hours evidence on insights | Required for quantified stop recommendations |
+| `migrations/0008_workspace_users.sql` | tenant-scoped workspace user directory | Required for user management CRUD |
 
 ## Apply on Supabase
 

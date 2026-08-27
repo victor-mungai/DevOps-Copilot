@@ -40,8 +40,8 @@ export function CostPage() {
     setError('');
     try {
       const path = region
-        ? `/v1/insights/${tenantId}/analyze?region=${encodeURIComponent(region)}`
-        : `/v1/insights/${tenantId}/analyze`;
+        ? `/v1/insights/${tenantId}/analyze?async_mode=false&region=${encodeURIComponent(region)}`
+        : `/v1/insights/${tenantId}/analyze?async_mode=false`;
       const res = await apiFetch<AsyncJobResponse>(path, { method: 'POST', tenantId });
       if (res.job_id) {
         let attempts = 0;
@@ -152,7 +152,7 @@ export function CostPage() {
           label="Annualized Savings"
           value={formatCurrency(totalSavings * 12)}
           accent={totalSavings > 0 ? 'text-emerald-400' : 'text-white'}
-          hint="est. / year"
+          hint="annualized from quantified findings"
         />
       </div>
 
@@ -193,7 +193,7 @@ export function CostPage() {
                     <td className="px-4 py-3 text-gray-300 capitalize">{i.resource_type ?? i.instance_type ?? 'EC2'}</td>
                     <td className="px-4 py-3 text-gray-300">{i.issue || i.title}</td>
                     <td className="px-4 py-3 text-emerald-400 font-semibold">
-                      {i.estimated_monthly_waste ? formatCurrency(i.estimated_monthly_waste) + '/mo' : '$0.00'}
+                      {i.estimated_monthly_waste ? formatCurrency(i.estimated_monthly_waste) + '/mo' : 'No data available'}
                     </td>
                     <td className="px-4 py-3 text-gray-400">{i.recommendation}</td>
                   </tr>
@@ -206,7 +206,7 @@ export function CostPage() {
 
       <p className="text-gray-600 text-xs mt-4 flex items-center gap-1">
         <DollarSign className="w-3.5 h-3.5" />
-        Estimates use live telemetry metrics & AWS instance pricing lookup.
+        Savings are shown only when supported by tenant-scoped telemetry and cost evidence.
       </p>
     </div>
   );
